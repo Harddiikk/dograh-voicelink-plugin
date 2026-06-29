@@ -1,0 +1,26 @@
+{
+  "name": "dograh-voicelink-plugin",
+  "version": "1.0.0",
+  "description": "Zero-to-hero VoiceLink ↔ Dograh telephony integration. Drops the proven, non-breaking VoiceLink provider overlay onto any stock Dograh (source checkout or Docker image), wires the single inbound+outbound WSS URL, configures the telephony card, and verifies the whole thing end-to-end.",
+  "author": {
+    "name": "Hardik Agarwal",
+    "url": "https://github.com/Harddiikk"
+  },
+  "homepage": "https://github.com/Harddiikk/dograh-voicelink-plugin",
+  "repository": "https://github.com/Harddiikk/dograh-voicelink-plugin",
+  "license": "MIT",
+  "keywords": [
+    "dograh",
+    "voicelink",
+    "telephony",
+    "voice-ai",
+    "websocket",
+    "wss",
+    "sip",
+    "inbound",
+    "outbound",
+    "pipecat",
+    "fastapi",
+    "integration"
+  ]
+}

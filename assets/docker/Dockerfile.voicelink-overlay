@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+#
+# VoiceLink provider overlay on a stock Dograh API image.
+#
+# This is the proven, non-breaking approach used on the GPC deployment:
+# take the official image and add ONLY the VoiceLink provider package + the
+# three wiring edits. No KYC/SaaS, no Alembic migrations, no fork baggage.
+#
+# Build context MUST be the plugin root (the directory containing assets/ and
+# scripts/). build-and-deploy.sh does this for you:
+#
+#   docker build -f assets/docker/Dockerfile.voicelink-overlay \
+#                -t gpc/dograh-api:voicelink .
+#
+# Override the base image or code root if your deployment differs:
+#   --build-arg BASE_IMAGE=dograhai/dograh-api:latest
+#   --build-arg DOGRAH_ROOT=/app
+
+ARG BASE_IMAGE=dograhai/dograh-api:latest
+FROM ${BASE_IMAGE}
+
+ARG DOGRAH_ROOT=""
+
+# Bring in the bundle (provider package + patches + overlay script), preserving
+# the layout apply_overlay.py expects (PLUGIN_ROOT = .../voicelink-overlay).
+COPY assets   /tmp/voicelink-overlay/assets
+COPY scripts  /tmp/voicelink-overlay/scripts
+
+# Apply the overlay in place against the image's code, then compile-check it so
+# the build fails loudly on any problem. Auto-detects the Dograh root unless
+# DOGRAH_ROOT is supplied.
+RUN set -eu; \
+    PY="$(command -v python3 || command -v python)"; \
+    "$PY" /tmp/voicelink-overlay/scripts/apply_overlay.py \
+        ${DOGRAH_ROOT:+--dograh-root "$DOGRAH_ROOT"} \
+        --compile-check; \
+    rm -rf /tmp/voicelink-overlay
+
+# The provider registers itself at import via the registration line added to
+# api/services/telephony/providers/__init__.py — no ENTRYPOINT/CMD change needed.
+# Inherit the base image's entrypoint/command unchanged.

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "dograh-voicelink-plugin",
+  "description": "VoiceLink ↔ Dograh telephony integration plugin for Claude Code.",
+  "owner": {
+    "name": "Hardik Agarwal",
+    "url": "https://github.com/Harddiikk"
+  },
+  "plugins": [
+    {
+      "name": "dograh-voicelink-plugin",
+      "source": "./",
+      "description": "Zero-to-hero VoiceLink telephony provider for Dograh. Bundles the real provider package, applies the three surgical wiring edits, supports both source-checkout and Docker-overlay installs, configures the single inbound+outbound WSS URL and the Settings → Telephony card, and verifies end-to-end with built-in debugging.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Hardik Agarwal",
+        "url": "https://github.com/Harddiikk"
+      },
+      "category": "telephony",
+      "keywords": [
+        "dograh",
+        "voicelink",
+        "telephony",
+        "voice-ai",
+        "websocket",
+        "integration"
+      ],
+      "homepage": "https://github.com/Harddiikk/dograh-voicelink-plugin",
+      "repository": "https://github.com/Harddiikk/dograh-voicelink-plugin",
+      "license": "MIT"
+    }
+  ]
+}
