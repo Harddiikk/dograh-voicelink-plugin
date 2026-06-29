@@ -17,7 +17,7 @@
 #
 # Usage:
 #   verify.sh <base-url> [--token <bearer>]
-#   verify.sh https://api.auto4you.in
+#   verify.sh https://api.your-domain.com
 #   verify.sh http://localhost:8000 --token "$ACCESS_TOKEN"
 set -uo pipefail
 

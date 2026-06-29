@@ -64,7 +64,7 @@ location /api/v1/telephony/ws {
   NAT/TURN. (In-browser WebRTC *test* calls may still need TURN; real VoiceLink calls
   don't.)
 
-## Docker overlay deploy (the GPC-proven path)
+## Docker overlay deploy (the production-proven path)
 
 The overlay image = stock `dograhai/dograh-api:latest` + the provider package + the three
 edits. Build it with `assets/docker/build-and-deploy.sh`, push to a registry, and pull on

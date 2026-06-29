@@ -1,6 +1,6 @@
 # VOICELINK ↔ DOGRAH INTEGRATION MAP
 
-> How VoiceLink is wired into a Dograh fork (the `voice-engine` repo) as a first-class telephony provider, end to end. This document is reproduction-grade: a future engineer or a Claude Code plugin should be able to recreate the integration on a clean Dograh fork by following it.
+> How VoiceLink is wired into a Dograh fork as a first-class telephony provider, end to end. This document is reproduction-grade: a future engineer or a Claude Code plugin should be able to recreate the integration on a clean Dograh fork by following it.
 >
 > Scope note: findings come from 6 readers of the real, working, tested code. Where the code itself flags something as "unconfirmed upstream" (mainly the exact inbound `start`-frame field names and the inbound answer-body keys), this document repeats that caveat rather than presenting it as settled fact.
 
@@ -59,7 +59,7 @@ The `<host>` part of that WSS URL is **not stored anywhere** and **not a config 
 
 ### Provisioning / reseller-KYC feature (NEW — white-label SaaS layer, *separate* from the media path)
 
-> These are part of the Auto4You white-label fork's "create/manage VoiceLink reseller client" feature. They are **not** required for inbound/outbound media to work, but they are part of "how VoiceLink is integrated" in the live fork. The referenced design spec (`2026-06-16-admin-clients...`) covers *this* feature and explicitly marks inbound + media-WSS work **out of scope** — so the single-WSS / inbound+outbound design intent lives in code docstrings, not that spec.
+> These are part of a white-label fork's "create/manage VoiceLink reseller client" feature. They are **not** required for inbound/outbound media to work, but they are part of "how VoiceLink is integrated" in the source fork. The referenced design spec (`2026-06-16-admin-clients...`) covers *this* feature and explicitly marks inbound + media-WSS work **out of scope** — so the single-WSS / inbound+outbound design intent lives in code docstrings, not that spec.
 
 | File | NEW/MOD | Role |
 |---|---|---|
@@ -83,7 +83,7 @@ The `<host>` part of that WSS URL is **not stored anywhere** and **not a config 
 | File | NEW/MOD | Role |
 |---|---|---|
 | `api/.env.example` | **MOD** | Documents (commented) `VOICELINK_API_BASE`, `VOICELINK_RESELLER_USERNAME/PASSWORD` (lines 49–54); `BACKEND_API_ENDPOINT=http://localhost:8000` (line 8). |
-| `deploy/vps/.env.api.example` | **MOD** | Production template: `BACKEND_API_ENDPOINT=https://api.auto4you.in`, `APP_SECRET_KEY`, `VOICELINK_API_BASE`, `VOICELINK_RESELLER_USERNAME=CHANGEME`, `VOICELINK_RESELLER_PASSWORD=CHANGEME`. |
+| `deploy/vps/.env.api.example` | **MOD** | Production template: `BACKEND_API_ENDPOINT=https://api.your-domain.com`, `APP_SECRET_KEY`, `VOICELINK_API_BASE`, `VOICELINK_RESELLER_USERNAME=CHANGEME`, `VOICELINK_RESELLER_PASSWORD=CHANGEME`. |
 | `deploy/vps/DEPLOY.md` | **MOD** | Section 5 = VoiceLink post-deploy config; restates that both the wss media URL and the events webhook derive from `BACKEND_API_ENDPOINT`; "no TURN server" quirk. |
 
 ### Pre-existing, UNCHANGED, but load-bearing (registry/convention-driven — do **not** edit per provider)
@@ -129,7 +129,7 @@ Returns `(backend_endpoint, wss_backend_endpoint)`. If `BACKEND_API_ENDPOINT` is
 
 The literal flow the prompt asks about (a user pasting a URL) does **not** happen for the WSS URL. The accurate flow is:
 
-1. **Operator/deployer sets `BACKEND_API_ENDPOINT`** in the API host's environment (e.g. `deploy/vps/.env.api` → `BACKEND_API_ENDPOINT=https://api.auto4you.in`). This is the *only* configurable piece. It is **not** stored in the DB.
+1. **Operator/deployer sets `BACKEND_API_ENDPOINT`** in the API host's environment (e.g. `deploy/vps/.env.api` → `BACKEND_API_ENDPOINT=https://api.your-domain.com`). This is the *only* configurable piece. It is **not** stored in the DB.
 2. **At call time**, `get_backend_endpoints()` reads it and returns the `(https, wss)` pair.
 3. **Outbound:** `provider.initiate_call()` concatenates the fixed path + run ids and ships it **inline** to VoiceLink in the `add_lead` body (`websocket_url`). Nothing is persisted.
 4. **Inbound:** the operator pastes the bare `wss://<host>/api/v1/telephony/ws` into **VoiceLink's own portal/bot config** (external to this repo) so incoming calls connect there.
@@ -462,7 +462,7 @@ ProviderUIField(
 
 | Env var | Type / default | Role |
 |---|---|---|
-| **`BACKEND_API_ENDPOINT`** | url, default `http://localhost:8000` | **The single source of the media WSS URL and the events webhook URL.** `https://`→`wss://`. Must be public `https://` in prod (e.g. `https://api.auto4you.in`). `localhost`/unset → cloudflared tunnel fallback. |
+| **`BACKEND_API_ENDPOINT`** | url, default `http://localhost:8000` | **The single source of the media WSS URL and the events webhook URL.** `https://`→`wss://`. Must be public `https://` in prod (e.g. `https://api.your-domain.com`). `localhost`/unset → cloudflared tunnel fallback. |
 | `VOICELINK_API_BASE` | url, default `https://app.voicelink.co.in/api` | VoiceLink's **own** cloud REST API base (direction: us → VoiceLink) for reseller KYC/provisioning. Distinct from the per-org `api_base` DB field. |
 | `VOICELINK_RESELLER_USERNAME` | str (`CHANGEME`) | Reseller KYC creds. Unset → KYC page "not configured", KYC routes 503. |
 | `VOICELINK_RESELLER_PASSWORD` | str (`CHANGEME`) | Reseller KYC creds. |
@@ -479,7 +479,7 @@ ProviderUIField(
 
 ```dotenv
 # Public origin — derives BOTH the wss media URL and the events webhook
-BACKEND_API_ENDPOINT=https://api.auto4you.in
+BACKEND_API_ENDPOINT=https://api.your-domain.com
 ENVIRONMENT=production
 
 # At-rest secret encryption (Fernet)
@@ -500,10 +500,10 @@ VOICELINK_RESELLER_PASSWORD=CHANGEME
 
 ### Deploy notes (`deploy/vps/DEPLOY.md` §5)
 
-- `BACKEND_API_ENDPOINT` must be `https://` and **publicly reachable**, or the scheme swap yields an unreachable `wss://` and VoiceLink cannot stream audio. Derived URLs: `wss://api.auto4you.in/api/v1/telephony/ws/...` (media) and `https://api.auto4you.in/api/v1/telephony/voicelink/events/...` (events).
+- `BACKEND_API_ENDPOINT` must be `https://` and **publicly reachable**, or the scheme swap yields an unreachable `wss://` and VoiceLink cannot stream audio. Derived URLs: `wss://api.your-domain.com/api/v1/telephony/ws/...` (media) and `https://api.your-domain.com/api/v1/telephony/voicelink/events/...` (events).
 - Ports 80/443 open; **Caddy** terminates TLS and proxies `api:8000` **with WebSocket upgrade** for the `/api/v1/telephony/ws` path.
 - **No TURN/coturn required** — VoiceLink media is server-to-server WSS, unaffected by TURN.
-- Health check: `curl https://api.auto4you.in/api/v1/health`; `docker compose logs -f api` / `caddy` (Caddy logs surface TLS + WS-upgrade issues).
+- Health check: `curl https://api.your-domain.com/api/v1/health`; `docker compose logs -f api` / `caddy` (Caddy logs surface TLS + WS-upgrade issues).
 - Restart the api after editing `.env.api` (`docker compose up -d`).
 - On VoiceLink's reseller/bot panel, point the inbound bot's media WebSocket at the **bare** `wss://<your-domain>/api/v1/telephony/ws`. Outbound needs no panel config — `add_lead` carries `websocket_url`/`webhook_url` inline.
 

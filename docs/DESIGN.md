@@ -8,7 +8,7 @@ map of the underlying integration).
 
 A self-contained Claude Code plugin that takes a stock Dograh from **zero to working
 VoiceLink calling** (inbound + outbound) with one command, reproducing the exact
-integration already proven on two deployments (GPC and the orders "voice-engine" fork) —
+integration already proven on real production deployments —
 without dragging along the parts of that fork that don't generalize.
 
 ## Background: how VoiceLink fits into Dograh
@@ -26,12 +26,12 @@ unsigned webhook POSTs.
 
 ## Key decision: provider-only overlay, not the full fork
 
-The orders `voice-engine` fork contains the working provider **plus** a white-label
+The upstream reference Dograh fork contains the working provider **plus** a white-label
 reseller-KYC/SaaS layer and two Alembic migrations. Installing the whole fork image onto a
 stock Dograh breaks: it carries unmerged Alembic heads and KYC/SaaS code that won't cleanly
 migrate an existing DB.
 
-The GPC deployment already proved the right answer: a **provider-only overlay** on the
+Production already proved the right answer: a **provider-only overlay** on the
 stock `dograhai/dograh-api:latest` — copy the `voicelink/` package, add the `VOICELINK`
 enum member, add the one registration import. The only stock-missing symbol the provider
 needs is `WorkflowRunMode.VOICELINK`. No migration is required because `provider` is a
@@ -66,7 +66,7 @@ doesn't send anyone hunting for a WSS field that doesn't exist.
   loudly and points at the matching `assets/patches/*.md`. `--compile-check` py_compiles
   the result (used in the Docker build).
 - **`assets/provider/voicelink/`** — the 6 real provider files, bundled verbatim (true
-  copy-paste; already running on GPC + orders).
+  copy-paste; already running in production).
 - **`assets/docker/`** — `Dockerfile.voicelink-overlay` (FROM the stock image + overlay +
   compile-check) and `build-and-deploy.sh`.
 - **`assets/patches/`** — exact manual-fallback diffs for the three edits.

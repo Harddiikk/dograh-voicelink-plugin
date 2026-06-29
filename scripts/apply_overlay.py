@@ -3,7 +3,7 @@
 
 This is the engine behind ``/voicelink-install``. It is deliberately
 self-contained (stdlib only), idempotent, and safe to re-run. It performs
-exactly the proven, non-breaking changes the GPC + orders deployments use:
+exactly the proven, non-breaking changes used in production:
 
   1. Copy the bundled ``voicelink/`` provider package into
      ``<root>/api/services/telephony/providers/voicelink/``.

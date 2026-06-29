@@ -2,7 +2,7 @@
 #
 # VoiceLink provider overlay on a stock Dograh API image.
 #
-# This is the proven, non-breaking approach used on the GPC deployment:
+# This is the proven, non-breaking approach used in production:
 # take the official image and add ONLY the VoiceLink provider package + the
 # three wiring edits. No KYC/SaaS, no Alembic migrations, no fork baggage.
 #
@@ -10,7 +10,7 @@
 # scripts/). build-and-deploy.sh does this for you:
 #
 #   docker build -f assets/docker/Dockerfile.voicelink-overlay \
-#                -t gpc/dograh-api:voicelink .
+#                -t local/dograh-api:voicelink .
 #
 # Override the base image or code root if your deployment differs:
 #   --build-arg BASE_IMAGE=dograhai/dograh-api:latest

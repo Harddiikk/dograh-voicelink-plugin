@@ -3,7 +3,7 @@
 A **zero-to-hero Claude Code plugin** that adds the **VoiceLink** telephony provider to a
 [Dograh](https://github.com/dograh-hq/dograh) voice-AI instance — from nothing to working
 **outbound** calls plus an **implemented inbound** path — using the proven, non-breaking
-provider-overlay approach already running on the GPC and orders deployments.
+provider-overlay approach already proven in production deployments.
 
 > Outbound is fully proven in production. Inbound is implemented and wired the same way,
 > but VoiceLink's inbound `start`-frame field names are *unconfirmed upstream* until a real
@@ -129,8 +129,7 @@ bash scripts/verify.sh https://api.your-domain.com
 
 ## How it was built
 
-Reverse-engineered from the real, tested VoiceLink integration in the `voice-engine`
-Dograh fork and the GPC overlay deployment, then verified. The overlay engine ships with a
+Reverse-engineered from a real, production VoiceLink integration on Dograh, then verified. The overlay engine ships with a
 self-contained regression suite — `python tests/test_apply_overlay.py` synthesizes
 Dograh-shaped fixtures (standard, no-trailing-comma, tab-indented) and asserts correct
 AST-level wiring, idempotency, and rollback-on-compile-failure. See

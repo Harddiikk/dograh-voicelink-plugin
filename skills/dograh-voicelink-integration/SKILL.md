@@ -10,7 +10,7 @@ metadata:
 
 This skill makes a stock Dograh speak VoiceLink, both **inbound** and **outbound**,
 using the proven non-breaking provider-overlay approach (the same one running on the
-GPC and orders deployments). The bundled `assets/provider/voicelink/` package is the
+production deployments). The bundled `assets/provider/voicelink/` package is the
 real, tested implementation — this skill just installs and wires it correctly.
 
 `${CLAUDE_PLUGIN_ROOT}` is the plugin's install directory (it contains `scripts/`,
@@ -76,7 +76,7 @@ Then point the compose `api` service at `<your-registry>/dograh-api:voicelink`. 
 build on a tiny VPS (2GB can't build) — build elsewhere, push, and `docker compose pull`.
 See `references/env-and-deploy.md`.
 
-> Do **not** use the full `voice-engine` fork image for GPC-style deployments — it carries
+> Do **not** use the full upstream fork image for overlay deployments — it carries
 > KYC/SaaS code and unmerged Alembic migrations that won't cleanly migrate a stock DB. The
 > overlay needs no migrations (the `provider` column is a plain string).
 

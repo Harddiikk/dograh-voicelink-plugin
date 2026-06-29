@@ -2,7 +2,7 @@
 #
 # Build the VoiceLink overlay image and (optionally) deploy it.
 #
-# This wraps the proven GPC overlay flow: derive a custom image from the stock
+# This wraps the proven production overlay flow: derive a custom image from the stock
 # Dograh API image with the VoiceLink provider baked in, then point your
 # compose at it. Safe to re-run.
 #
@@ -11,7 +11,7 @@
 #
 # Options:
 #   --base IMAGE       Stock base image       (default: dograhai/dograh-api:latest)
-#   --tag  IMAGE       Output image tag        (default: gpc/dograh-api:voicelink)
+#   --tag  IMAGE       Output image tag        (default: local/dograh-api:voicelink)
 #   --dograh-root P    Code root in the image  (default: auto-detect)
 #   --push             docker push the built image
 #   --compose-up FILE  After build, run: docker compose -f FILE up -d api
@@ -19,12 +19,12 @@
 #
 # Examples:
 #   ./build-and-deploy.sh
-#   ./build-and-deploy.sh --tag ghcr.io/harddiikk/dograh-api:voicelink --push
-#   ./build-and-deploy.sh --compose-up /opt/voiceengine/docker-compose.yml
+#   ./build-and-deploy.sh --tag ghcr.io/<you>/dograh-api:voicelink --push
+#   ./build-and-deploy.sh --compose-up /opt/dograh/docker-compose.yml
 set -euo pipefail
 
 BASE="dograhai/dograh-api:latest"
-TAG="gpc/dograh-api:voicelink"
+TAG="local/dograh-api:voicelink"
 DOGRAH_ROOT=""
 PUSH=0
 COMPOSE_FILE=""
