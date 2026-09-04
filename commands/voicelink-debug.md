@@ -50,8 +50,10 @@ read the actual output, then decide. Full detail in `references/debugging.md`.
 - Webhooks are **unsigned** — the DID match is the only inbound authorization boundary.
 - `get_call_status` → `"unknown"`, `get_call_cost` → zeros, `transfer_call` →
   `NotImplementedError` (no per-call status/cost/transfer API wired).
-- The card is credentials-only: no `api_base`, `did_number`, or `from_numbers` fields.
-  `api_base` defaults in the schema; the outbound caller id is the per-call `from_number`.
+- The card is credentials-only: `api_base`, `did_number` and `from_numbers` are still in
+  the schema/provider but not card fields. `api_base` defaults; `from_numbers` is filled by
+  the telephony factory from the active `telephony_phone_numbers` rows and is what the
+  campaign dispatcher / `initiate_call` use for the outbound caller id.
 
 Report findings layer by layer. Don't propose a fix before you've read the log/probe that
 localizes the failure (systematic debugging).

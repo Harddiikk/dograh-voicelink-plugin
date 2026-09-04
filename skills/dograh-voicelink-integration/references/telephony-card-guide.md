@@ -31,11 +31,13 @@ These come from `_UI_METADATA` in `providers/voicelink/__init__.py`. The card is
 > exposed on the card; override it in the stored `config` JSONB directly if a different
 > base is ever needed.
 
-> **No DID / Phone Numbers field.** The outbound caller id is supplied per call (the
-> `from_number` passed to `initiate_call`), and inbound DIDs are managed as
-> `telephony_phone_numbers` rows on the config detail page (see below) — not on this card.
-> VoiceLink's `add_lead` still **requires** a `did_number`, so a DID must be bound to the
-> campaign for outbound to work — `initiate_call` raises `ValueError` if none is passed.
+> **No DID / Phone Numbers field.** `did_number` and `from_numbers` stay in the schema
+> (optional) and on the provider — they're just not card fields. DIDs are managed as
+> `telephony_phone_numbers` rows on the config detail page (see below); the telephony
+> factory turns the active rows into the provider's `from_numbers`, and the campaign
+> dispatcher builds the outbound caller-id pool from that. VoiceLink's `add_lead`
+> **requires** a `did_number`, so at least one DID must be attached for outbound to work —
+> `initiate_call` raises `ValueError` if it can't resolve one.
 
 > There is deliberately **no WSS-URL field** here. The media WSS URL is derived from
 > `BACKEND_API_ENDPOINT` and pasted into the VoiceLink portal, not into this card. See

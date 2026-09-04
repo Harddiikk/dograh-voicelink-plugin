@@ -11,11 +11,16 @@ from api.services.telephony.providers.voicelink.provider import (
 
 
 def _provider(**overrides) -> VoiceLinkProvider:
+    # did_number / from_numbers are not card fields, but the telephony factory
+    # fills from_numbers from the config's phone-number rows before the provider
+    # is built — so a resolved config still carries them.
     config = {
         "api_base": "https://app.voicelink.co.in/api",
         "username": "reseller-user",
         "password": "placeholder-password",
         "bearer_token": None,
+        "did_number": "919484959244",
+        "from_numbers": ["919484959244"],
     }
     config.update(overrides)
     return VoiceLinkProvider(config)
@@ -148,8 +153,8 @@ async def test_initiate_call_uses_explicit_from_number_as_did():
 @pytest.mark.asyncio
 async def test_initiate_call_rejects_missing_caller_id():
     """VoiceLink's add_lead requires a non-empty did_number — with no
-    from_number to derive it from, fail before calling the API."""
-    provider = _provider()
+    from_number, no did_number and no from_numbers, fail before the API call."""
+    provider = _provider(did_number=None, from_numbers=[])
 
     with patch(
         "api.services.telephony.providers.voicelink.provider.get_backend_endpoints",
@@ -164,6 +169,35 @@ async def test_initiate_call_rejects_missing_caller_id():
                 workflow_id=7,
                 user_id=11,
             )
+
+
+@pytest.mark.asyncio
+async def test_initiate_call_falls_back_to_configured_did():
+    """With no explicit from_number, the stored from_numbers[0] is the caller id
+    (the factory populates from_numbers from the phone-number rows)."""
+    provider = _provider(did_number=None, from_numbers=["919484959244"])
+
+    with (
+        patch.object(
+            provider, "_api_request", new_callable=AsyncMock
+        ) as api_request,
+        patch(
+            "api.services.telephony.providers.voicelink.provider.get_backend_endpoints",
+            new_callable=AsyncMock,
+            return_value=("https://example.test", "wss://example.test"),
+        ),
+    ):
+        api_request.return_value = _ADD_LEAD_SUCCESS
+        await provider.initiate_call(
+            to_number="7340400524",
+            webhook_url="unused",
+            workflow_run_id=123,
+            workflow_id=7,
+            user_id=11,
+        )
+
+    _, _, payload = api_request.await_args.args
+    assert payload["did_number"] == "919484959244"
 
 
 @pytest.mark.asyncio
@@ -363,4 +397,10 @@ def test_validate_config_accepts_bearer_token_only():
 
 def test_validate_config_rejects_missing_auth():
     provider = _provider(username=None, password=None, bearer_token=None)
+    assert provider.validate_config() is False
+
+
+def test_validate_config_rejects_missing_did():
+    """Outbound needs a DID (phone-number row or did_number) — add_lead enforces it."""
+    provider = _provider(did_number=None, from_numbers=[])
     assert provider.validate_config() is False

@@ -126,8 +126,10 @@ bash scripts/verify.sh https://api.your-domain.com
   `dograhai/dograh-api:latest` / a derived image).
 - Python 3 (stdlib only) to run the overlay; `docker` for the overlay-image path.
 - A public `https://` origin for the api with WebSocket upgrades proxied through.
-- VoiceLink account credentials (username/password or a bearer token). A DID is only
-  needed for inbound calls — added later as a phone-number row, not on the config card.
+- VoiceLink account credentials (username/password or a bearer token) — the only thing the
+  telephony card asks for.
+- At least one VoiceLink DID, added afterwards as a phone-number row on the config detail
+  page (not a card field). Required for **both** inbound routing and outbound caller id.
 
 ## How it was built
 

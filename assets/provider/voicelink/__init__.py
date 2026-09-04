@@ -15,12 +15,20 @@ from .transport import create_transport
 
 
 def _config_loader(value: Dict[str, Any]) -> Dict[str, Any]:
+    # Credentials come from the Settings → Telephony card. did_number /
+    # from_numbers are NOT card fields — the telephony factory fills
+    # from_numbers from the active telephony_phone_numbers rows and the
+    # campaign dispatcher reads it to build the outbound caller-id pool —
+    # but pass through anything already stored so an older Dograh without
+    # that factory step still works.
     return {
         "provider": "voicelink",
         "api_base": value.get("api_base"),
         "username": value.get("username"),
         "password": value.get("password"),
         "bearer_token": value.get("bearer_token"),
+        "did_number": value.get("did_number"),
+        "from_numbers": value.get("from_numbers", []),
     }
 
 

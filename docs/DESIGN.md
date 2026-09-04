@@ -111,7 +111,9 @@ case in the suite.
 - Webhooks are **unsigned** — the DID match is the only inbound auth boundary.
 - No per-call status/cost; `transfer_call` is `NotImplementedError`.
 - The Settings → Telephony card is **credentials-only** (`username` / `password` /
-  `bearer_token`); `api_base` defaults in the schema, and DID / caller-id is per-call.
+  `bearer_token`); `api_base`, `did_number` and `from_numbers` stay in the schema/provider
+  but aren't card fields — DIDs are attached as phone-number rows, which the telephony
+  factory turns into the outbound `from_numbers`.
 - Inbound `start`-frame field names are "unconfirmed upstream" — the handler `pick()`s
   across spellings and logs the raw frame; confirm against a real inbound call.
 

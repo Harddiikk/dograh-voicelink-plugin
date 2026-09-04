@@ -134,7 +134,7 @@ The literal flow the prompt asks about (a user pasting a URL) does **not** happe
 3. **Outbound:** `provider.initiate_call()` concatenates the fixed path + run ids and ships it **inline** to VoiceLink in the `add_lead` body (`websocket_url`). Nothing is persisted.
 4. **Inbound:** the operator pastes the bare `wss://<host>/api/v1/telephony/ws` into **VoiceLink's own portal/bot config** (external to this repo) so incoming calls connect there.
 
-What *is* entered on the **Dograh UI card** (and stored in the DB `telephony_configurations.config` JSONB) is the VoiceLink **credential set only**: `username`/`password` or `bearer_token`. `api_base` stays in the schema with its default and is not on the card; `did_number` / `from_numbers` / `client_id` are gone. None of these is the WSS URL.
+What *is* entered on the **Dograh UI card** (and stored in the DB `telephony_configurations.config` JSONB) is the VoiceLink **credential set only**: `username`/`password` or `bearer_token`. `api_base` stays in the schema with its default and is not on the card. `did_number` / `from_numbers` also stay in the schema (optional) but are not card fields — DIDs are managed as `telephony_phone_numbers` rows, which the telephony factory turns into the effective `from_numbers`. `client_id` is not carried by this overlay. None of these is the WSS URL.
 
 ---
 
@@ -167,7 +167,7 @@ SPEC = ProviderSpec(
 register(SPEC)
 ```
 
-`_config_loader` reshapes the stored DB dict → `{provider, api_base, username, password, bearer_token}`. The card is credentials-only; `api_base` is passed through if present in the stored config, otherwise the provider falls back to its `DEFAULT_API_BASE`. `account_id_credential_field="username"` exists because VoiceLink inbound has no account id (DID is used instead).
+`_config_loader` reshapes the stored DB dict → `{provider, api_base, username, password, bearer_token, did_number, from_numbers}`. Only the credentials come from the card; `did_number`/`from_numbers` are passed through from any stored value, and on a Dograh with the phone-number factory step (`_normalize_with_phone_numbers`) `from_numbers` is then overwritten with the active `telephony_phone_numbers` addresses. `api_base` falls back to `DEFAULT_API_BASE` when unset. `account_id_credential_field="username"` exists because VoiceLink inbound has no account id (DID is used instead).
 
 `ProviderSpec` carries **no** router field — routes are discovered separately by path convention (see 4.3).
 
@@ -217,14 +217,17 @@ class VoiceLinkConfigurationRequest(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     bearer_token: Optional[str] = None
+    did_number: Optional[str] = None                              # optional, not on the card
+    from_numbers: List[str] = []                                  # not on the card; factory fills it
 
     @model_validator(...)
     def _require_credentials(self):  # bearer_token OR (username AND password)
         ...
 ```
-No `did_number` / `from_numbers` / `client_id` — the card is credentials-only. The
-outbound caller id is the per-call `from_number`; inbound DIDs are `telephony_phone_numbers`
-rows.
+Only the three credential fields are on the card. `did_number` (optional) and
+`from_numbers` stay in the schema so a stored value round-trips; the effective
+`from_numbers` is the active `telephony_phone_numbers` rows, joined in by the telephony
+factory. `client_id` is not carried by this overlay.
 `VoiceLinkConfigurationResponse` mirrors these and masks sensitive fields. **There is no `websocket`/WSS field in either schema** — the WSS URL is computed at call time, never stored.
 
 ### 4.5 Serializer wiring into the shared union — `api/schemas/telephony_config.py`
@@ -302,7 +305,7 @@ events_url = (
 )
 
 payload = {
-    "did_number": did_number,            # from the per-call `from_number` (91-prefixed); REQUIRED by add_lead
+    "did_number": did_number,            # from_number → did_number → from_numbers[0] (91-prefixed); REQUIRED by add_lead
     "customer_number": customer_number,  # bare 10-digit local number
     "custom_parameters": json.dumps({...workflow_id/user_id/workflow_run_id...}),
     "websocket_url": websocket_url,      # inline, no answer-URL step
@@ -323,7 +326,7 @@ Tests pin this byte-for-byte: with `get_backend_endpoints` patched to `("https:/
       return digits[1:]
   return digits
   ```
-  `customer_number` **must** be bare 10-digit (a 91-prefixed customer number fails the carrier with Q.850 cause 38). `did_number` is `re.sub(r"\D", "", from_number or "")` — the per-call caller id, kept in its 91-prefixed registered form. VoiceLink's `add_lead` **requires** a non-empty `did_number` (confirmed against the live API: `{"errors":{"did_number":["The did number field is required."]}}`), so `initiate_call` raises `ValueError` up front when no `from_number` is supplied rather than sending `""`. (Note the exact-12 guard means a 10-digit number that happens to start `91` is *not* stripped.)
+  `customer_number` **must** be bare 10-digit (a 91-prefixed customer number fails the carrier with Q.850 cause 38). `did_number` = `re.sub(r"\D", "", from_number or self.did_number or from_numbers[0] or "")` — the caller id, kept in its 91-prefixed registered form. VoiceLink's `add_lead` **requires** a non-empty `did_number` (confirmed against the live API: `{"errors":{"did_number":["The did number field is required."]}}`), so `initiate_call` raises `ValueError` up front when it can't resolve one rather than sending `""`. (Note the exact-12 guard means a 10-digit number that happens to start `91` is *not* stripped.)
 - **Auth / retry:**
   ```python
   token = self._access_token or await self._login()
@@ -337,7 +340,7 @@ Tests pin this byte-for-byte: with `get_backend_endpoints` patched to `("https:/
   One 401 re-login retry only when username+password exist; a static bearer-only config returns the 401. `_login()` reads `data.access_token` and **never logs the password**.
 - `initiate_call` returns `CallInitiationResult(call_id=str(outbound_queue_id) or "voicelink-run-{run}", status="queued", caller_number=did_number, provider_metadata={outbound_queue_id, bot_id, client_id, carrier_id})`. On non-2xx → `HTTPException(status if >=400 else 502)`.
 - `parse_status_callback` maps nested camelCase `{event, call:{...}}` via `_EVENT_STATUS` (`call.initiated/ringing`, `answered`→`in-progress`, `completed/ended`→`completed`, `failed`); unknown events pass through; tolerates a missing `call` key; recording URL read from `recordingUrl` **or** `recording_url` (spelling guessed defensively).
-- `validate_config()` truth table: `api_base AND (bearer_token OR (username AND password))`.
+- `validate_config()` truth table: `api_base AND (bearer_token OR (username AND password)) AND (did_number OR from_numbers)` — a DID is required for outbound, which `add_lead` enforces.
 - `handle_websocket()` reads `connected` then `start`, extracts `stream_sid`/`streamSid` + `call_sid`, closes `4400` if no `stream_sid`, then `run_pipeline_telephony(..., transport_kwargs={stream_id, call_id})`.
 - `transfer_call` raises `NotImplementedError`; `supports_transfers()` returns `False`. `get_call_status` → `"unknown"`; `get_call_cost` → zeros. `get_webhook_response` returns `""` (no answer-markup step — both URLs are passed inline).
 
@@ -519,9 +522,9 @@ Tests live at `api/tests/telephony/voicelink/{test_provider,test_serializer,test
 
 *Provider (`test_provider.py`):*
 - `normalize_customer_number`: `91XXXXXXXXXX` (12 digits) → strip `91`; `0XXXXXXXXXX` (11 digits) → strip `0`; otherwise unchanged (a 10-digit `9184012929` is kept).
-- `add_lead` payload shape: bare-10-digit `customer_number`, `did_number` from the per-call `from_number` (91-kept), **JSON-string** `custom_parameters`, computed `websocket_url` == `wss://example.test/api/v1/telephony/ws/7/11/123`, `webhook_url` == `.../voicelink/events/123`.
-- `CallInitiationResult`: `call_id == str(outbound_queue_id)`, `status == "queued"`, `caller_number == did_number` (the per-call value).
-- `from_number` sets the caller id (91 prefix kept, formatting stripped); **no `from_number` → `ValueError`** before any API call (VoiceLink's `add_lead` requires `did_number`); no config-level DID fallback; missing routing ids → `ValueError`; provider error → `HTTPException(422)`.
+- `add_lead` payload shape: bare-10-digit `customer_number`, `did_number` resolved (from_number → did_number → from_numbers[0], 91-kept), **JSON-string** `custom_parameters`, computed `websocket_url` == `wss://example.test/api/v1/telephony/ws/7/11/123`, `webhook_url` == `.../voicelink/events/123`.
+- `CallInitiationResult`: `call_id == str(outbound_queue_id)`, `status == "queued"`, `caller_number == did_number` (the resolved value).
+- Caller id source order: per-call `from_number` → stored `did_number` → `from_numbers[0]` (91 prefix kept, formatting stripped). **Nothing resolvable → `ValueError`** before any API call (VoiceLink's `add_lead` requires `did_number`); missing routing ids → `ValueError`; provider error → `HTTPException(422)`.
 - Auth: login-first when no token; one 401 re-login+retry carrying the fresh token; **no** retry when only a static bearer token exists (returns the 401).
 - Event→status map: `answered`→`in-progress`, `completed`/`ended`→`completed`; unknown event passes through; defensive `recordingUrl`/`recording_url`; tolerates missing `call`.
 - `validate_config` truth table (§4.8).
@@ -553,7 +556,7 @@ Tests live at `api/tests/telephony/voicelink/{test_provider,test_serializer,test
 - **No end-to-end WSS upgrade healthcheck** — confirmation currently relies on a live call or the inbound start-frame log. Add a synthetic WS-upgrade probe against `/api/v1/telephony/ws`.
 - **Unconfirmed-upstream fields** — inbound `start`-frame DID location and the inbound answer-body keys are best-effort guesses (`pick()` over multiple spellings; full frame logged). Capture a real inbound call, then pin the keys and add a regression test.
 - **Stubs** — `get_call_status` → `"unknown"`, `get_call_cost` → zeros, `transfer_call` → `NotImplementedError`, `recordingUrl` spelling guessed. If VoiceLink exposes per-call status/cost APIs, wire them.
-- **Card is credentials-only** — `_UI_METADATA` renders `username`/`password`/`bearer_token`; `api_base` defaults in the schema and isn't exposed; `did_number`/`from_numbers`/`client_id` are not fields. Outbound caller id is the per-call `from_number`; inbound DIDs are `telephony_phone_numbers` rows.
+- **Card is credentials-only** — `_UI_METADATA` renders `username`/`password`/`bearer_token`. `api_base` (default) and `did_number`/`from_numbers` (optional) stay in the schema + provider but are not card fields; `from_numbers` is populated by the telephony factory from the active `telephony_phone_numbers` rows and read by the campaign dispatcher for the caller-id pool. `client_id` is not carried by this overlay.
 
 ---
 
@@ -561,17 +564,17 @@ Tests live at `api/tests/telephony/voicelink/{test_provider,test_serializer,test
 
 1. **Enum.** Add `VOICELINK = "voicelink"` to `WorkflowRunMode` in `api/enums.py`. No DB enum migration is needed — `provider` is stored as a plain string.
 2. **Create the package** `api/services/telephony/providers/voicelink/` with six files: `config.py`, `provider.py`, `serializers.py`, `transport.py`, `routes.py`, `__init__.py` (signatures/snippets in §4).
-3. **`config.py`** — `VoiceLinkConfigurationRequest`/`Response`: `provider: Literal["voicelink"]` discriminator, `api_base` default `https://app.voicelink.co.in/api`, optional `username`/`password`/`bearer_token` (no `did_number`/`from_numbers`/`client_id`); validator requires `bearer_token` OR (`username` AND `password`); response masks sensitive fields.
+3. **`config.py`** — `VoiceLinkConfigurationRequest`/`Response`: `provider: Literal["voicelink"]` discriminator, `api_base` default `https://app.voicelink.co.in/api`, optional `username`/`password`/`bearer_token`, optional `did_number`, `from_numbers: List[str] = []` (last two not card fields); validator requires `bearer_token` OR (`username` AND `password`); response masks sensitive fields.
 4. **`serializers.py`** — `VoiceLinkFrameSerializer` (A-law 8 kHz, `{"event":"media","stream_sid","media":{"payload"}}`, `{"event":"clear"}` on interruption, DTMF deserialize, `VOICELINK_INBOUND_GAIN`).
 5. **`transport.py`** — `create_transport(...)` calling `load_credentials_for_transport(..., expected_provider="voicelink")` and returning a `FastAPIWebsocketTransport` wired to the serializer (`voicelink_sample_rate=8000`, `sample_rate=audio_config.pipeline_sample_rate`).
 6. **`provider.py`** — `VoiceLinkProvider(TelephonyProvider)` with `PROVIDER_NAME = WorkflowRunMode.VOICELINK.value`, `WEBHOOK_ENDPOINT="voicelink/events"`, `normalize_customer_number`, `_login`/`_api_request` (one 401 retry), `initiate_call` (build `websocket_url`/`events_url` from `get_backend_endpoints()`, `POST /v1/add_lead`), `parse_status_callback`, `handle_websocket`, `start_inbound_stream`, `validate_config`. (`transfer_call` → `NotImplementedError`.)
 7. **`routes.py`** — module-level `router = APIRouter()`, `POST /voicelink/events/{workflow_run_id}` (parse → `_process_status_update`, return sentinel dicts, never raise), and `@router.websocket("/ws")` inbound (read `start`, route by DID via the `TelephonyConfigurationModel`+`TelephonyPhoneNumberModel` join, `_create_inbound_workflow_run`, `run_pipeline_telephony`). Use **lazy in-function imports** to avoid the circular import.
-8. **`__init__.py`** — build `_UI_METADATA` (`display_name="VoiceLink"`, three sensitive fields only: `username`/`password`/`bearer_token`); `_config_loader` returns `{provider, api_base, username, password, bearer_token}`; build `SPEC = ProviderSpec(name="voicelink", provider_cls=VoiceLinkProvider, config_loader=_config_loader, transport_factory=create_transport, transport_sample_rate=8000, config_request_cls=..., config_response_cls=..., ui_metadata=_UI_METADATA, account_id_credential_field="username")`; call `register(SPEC)`.
+8. **`__init__.py`** — build `_UI_METADATA` (`display_name="VoiceLink"`, three sensitive card fields: `username`/`password`/`bearer_token`); `_config_loader` returns `{provider, api_base, username, password, bearer_token, did_number, from_numbers}`; build `SPEC = ProviderSpec(name="voicelink", provider_cls=VoiceLinkProvider, config_loader=_config_loader, transport_factory=create_transport, transport_sample_rate=8000, config_request_cls=..., config_response_cls=..., ui_metadata=_UI_METADATA, account_id_credential_field="username")`; call `register(SPEC)`.
 9. **Register at startup.** Add `voicelink` to the import tuple in `api/services/telephony/providers/__init__.py`. **This is the only edit outside the provider folder needed for registration** (routes auto-mount; factory/audio_config/run_pipeline are registry-driven).
 10. **Schema union.** In `api/schemas/telephony_config.py`: import the request/response, add the request to the `TelephonyConfigRequest` discriminated `Union`, add `voicelink: Optional[VoiceLinkConfigurationResponse] = None` to `TelephonyConfigurationResponse`, add both to `__all__`.
 11. **Set the WSS host.** Set env var **`BACKEND_API_ENDPOINT`** to a public `https://` origin (e.g. `https://api.example.com`). Verify `get_backend_endpoints()` yields `wss://api.example.com`. Do **not** rely on the localhost default (yields plain `ws://` + tunnel fallback).
 12. **Reverse proxy.** Ensure TLS termination + WebSocket upgrade pass-through for `/api/v1/telephony/ws` (Caddy/nginx). No TURN needed.
-13. **DB data rows** (no migration needed if the models/columns already exist): one `telephony_configurations` row (`provider="voicelink"`, JSONB config with just the creds); one or more `telephony_phone_numbers` rows (`address_normalized` = the DID, `is_active=true`, `inbound_workflow_id` set) so inbound DID routing resolves.
+13. **DB data rows** (no migration needed if the models/columns already exist): one `telephony_configurations` row (`provider="voicelink"`, JSONB config with just the creds); one or more `telephony_phone_numbers` rows (`address_normalized` = the DID, `is_active=true`, `inbound_workflow_id` set for inbound). These rows are **required for outbound too** — the factory turns them into `from_numbers` and the campaign dispatcher builds the caller-id pool from that.
 14. **UI.** No per-provider UI code — VoiceLink appears in the provider dropdown automatically once metadata is registered. Add the config via Settings → Telephony → Add telephony configuration; add DIDs/inbound-workflow binding on the config detail page.
 15. **VoiceLink portal side.** Register the bare `wss://<your-host>/api/v1/telephony/ws` as the inbound bot/stream URL. Outbound requires no portal config.
 16. **(Optional) Reseller KYC/provisioning feature.** If using it: add `api/services/voicelink_kyc/`, `api/services/voicelink_clients/`, `api/utils/secret_crypto.py`; run the two Alembic migrations (`c9e2f5a17d04_...`, `a7f3c1e9b2d6_...`); set `VOICELINK_RESELLER_USERNAME/PASSWORD`, `VOICELINK_API_BASE`, and a Fernet `APP_SECRET_KEY` (and/or `VOICELINK_PROVISION_KEY`).

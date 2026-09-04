@@ -29,11 +29,15 @@ The card is **credentials only**:
 | **Bearer Token** | (alternative to user/pass) | Static; no auto-refresh |
 
 No API base or DID field: `api_base` defaults to `https://app.voicelink.co.in/api` in the
-schema, and the outbound caller id is supplied per call.
+schema. DIDs are added as phone-number rows in the next step.
 
 Save (requires either bearer_token OR username+password). Then on the config detail page,
-add each DID and **bind it to an inbound workflow** — this is what makes inbound routing
-work (it creates the `telephony_phone_numbers` row keyed on the normalized DID).
+**add each DID** — this is required for **both** directions:
+- **Inbound:** bind the DID to an inbound workflow (creates the `telephony_phone_numbers`
+  row the inbound handler routes against).
+- **Outbound:** the telephony factory turns the active rows into the provider's
+  `from_numbers`; the campaign dispatcher uses one as the caller id. VoiceLink's `add_lead`
+  rejects a call with no `did_number`, so at least one active DID must exist.
 
 ## 3. VoiceLink portal
 

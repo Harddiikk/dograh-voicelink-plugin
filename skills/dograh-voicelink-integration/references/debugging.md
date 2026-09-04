@@ -84,11 +84,13 @@ docker compose logs -f caddy    # TLS issuance + WS-upgrade problems
   `get_call_cost` → zeros, `transfer_call` → `NotImplementedError`,
   `supports_transfers()` → `False`. Wire these if VoiceLink exposes the APIs.
 - **Card is credentials-only.** `_UI_METADATA` renders just `username` / `password` /
-  `bearer_token`; `api_base` defaults in the schema and is not exposed, and there are no
-  `did_number` / `from_numbers` / `client_id` fields. The outbound caller id is the
-  per-call `from_number`; inbound DIDs live in `telephony_phone_numbers`. If you ever need
-  `client_id` on `add_lead`, re-add it to `config.py`, `_UI_METADATA`, and `_config_loader`
-  in `providers/voicelink/`.
+  `bearer_token`. `api_base`, `did_number` and `from_numbers` are still in the schema and
+  on the provider — they're just not card fields. `did_number`/`from_numbers` are populated
+  by the telephony factory from the active `telephony_phone_numbers` rows, and the campaign
+  dispatcher reads `provider.from_numbers` to build the outbound caller-id pool — so a DID
+  must be attached to the config for outbound. `client_id` is not carried (the KYC/bot
+  features that used it aren't in this overlay); re-add it to `config.py`, `_UI_METADATA`
+  and `_config_loader` if you need it on `add_lead`.
 - **Recording URL spelling guessed** — read from `recordingUrl` or `recording_url`
   defensively; confirm against a real event.
 - **No synthetic end-to-end WS healthcheck** beyond the `verify.sh` upgrade probe;
