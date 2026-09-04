@@ -110,7 +110,8 @@ case in the suite.
 
 - Webhooks are **unsigned** — the DID match is the only inbound auth boundary.
 - No per-call status/cost; `transfer_call` is `NotImplementedError`.
-- `_config_loader` omits `client_id`.
+- The Settings → Telephony card is **credentials-only** (`username` / `password` /
+  `bearer_token`); `api_base` defaults in the schema, and DID / caller-id is per-call.
 - Inbound `start`-frame field names are "unconfirmed upstream" — the handler `pick()`s
   across spellings and logs the raw frame; confirm against a real inbound call.
 

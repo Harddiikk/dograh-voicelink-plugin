@@ -15,8 +15,6 @@ def _provider() -> VoiceLinkProvider:
             "api_base": "https://app.voicelink.co.in/api",
             "username": "reseller-user",
             "password": "placeholder-password",
-            "did_number": "919484959244",
-            "from_numbers": ["919484959244"],
         }
     )
 

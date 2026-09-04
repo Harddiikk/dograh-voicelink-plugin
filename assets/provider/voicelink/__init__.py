@@ -21,8 +21,6 @@ def _config_loader(value: Dict[str, Any]) -> Dict[str, Any]:
         "username": value.get("username"),
         "password": value.get("password"),
         "bearer_token": value.get("bearer_token"),
-        "did_number": value.get("did_number"),
-        "from_numbers": value.get("from_numbers", []),
     }
 
 
@@ -30,14 +28,6 @@ _UI_METADATA = ProviderUIMetadata(
     display_name="VoiceLink",
     docs_url="https://docs.dograh.com/integrations/telephony/voicelink",
     fields=[
-        ProviderUIField(
-            name="api_base",
-            label="API Base URL",
-            type="text",
-            required=False,
-            description="VoiceLink API base URL",
-            placeholder="https://app.voicelink.co.in/api",
-        ),
         ProviderUIField(
             name="username",
             label="Username",
@@ -65,32 +55,6 @@ _UI_METADATA = ProviderUIMetadata(
             description=(
                 "Static VoiceLink bearer token. Optional when username and "
                 "password are provided."
-            ),
-        ),
-        ProviderUIField(
-            name="did_number",
-            label="DID Number",
-            type="text",
-            description=(
-                "DID registered with VoiceLink in its registered form "
-                "(e.g. 919484959244). Used as the caller id for outbound calls."
-            ),
-        ),
-        ProviderUIField(
-            name="from_numbers",
-            label="Phone Numbers",
-            type="string-array",
-            description="VoiceLink DID numbers in registered form",
-        ),
-        ProviderUIField(
-            name="client_id",
-            label="Client ID",
-            type="text",
-            required=False,
-            description=(
-                "VoiceLink client id for this account. Optional — the KYC "
-                "section uses it to scope KYC to this client; when unset, "
-                "KYC acts on the reseller's own account."
             ),
         ),
     ],

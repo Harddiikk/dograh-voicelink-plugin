@@ -20,8 +20,9 @@ pick the install *mode*.
 > **The one fact to know up front:** VoiceLink uses **ONE WSS URL for both inbound and
 > outbound** calls — `wss://<your-host>/api/v1/telephony/ws`. It is **derived** from the
 > `BACKEND_API_ENDPOINT` env var and pasted into the **VoiceLink portal**, *not* into the
-> Dograh telephony card. The card's "API Base URL" placeholder is VoiceLink's REST API, a
-> different thing. See [the single-WSS-URL guide](skills/dograh-voicelink-integration/references/single-wss-url.md).
+> Dograh telephony card. The telephony card only takes VoiceLink credentials
+> (username/password or bearer token) — no URLs. See
+> [the single-WSS-URL guide](skills/dograh-voicelink-integration/references/single-wss-url.md).
 
 ---
 
@@ -75,7 +76,7 @@ layouts. The Docker path builds a derived image with a **build-time compile-chec
 | URL | Direction | Goes where |
 |---|---|---|
 | `wss://<host>/api/v1/telephony/ws` | VoiceLink → Dograh (call audio, **in + out**) | **VoiceLink portal** — derived from `BACKEND_API_ENDPOINT` (`https`→`wss`) |
-| `https://app.voicelink.co.in/api` | Dograh → VoiceLink (dial / login) | **Dograh telephony card** → "API Base URL" |
+| `https://app.voicelink.co.in/api` | Dograh → VoiceLink (dial / login) | schema default for `api_base` — **not** on the telephony card |
 
 - **Inbound** connects to the bare `…/ws`; **outbound** uses `…/ws/{workflow_id}/{user_id}/{workflow_run_id}` (Dograh sends it automatically per call).
 - Set `BACKEND_API_ENDPOINT` to a public **`https://`** origin, and make sure your reverse
@@ -125,7 +126,8 @@ bash scripts/verify.sh https://api.your-domain.com
   `dograhai/dograh-api:latest` / a derived image).
 - Python 3 (stdlib only) to run the overlay; `docker` for the overlay-image path.
 - A public `https://` origin for the api with WebSocket upgrades proxied through.
-- VoiceLink account credentials and at least one DID.
+- VoiceLink account credentials (username/password or a bearer token). A DID is only
+  needed for inbound calls — added later as a phone-number row, not on the config card.
 
 ## How it was built
 

@@ -1,5 +1,5 @@
 ---
-description: Guide configuring VoiceLink after install — fill the Settings → Telephony card (API base, credentials, DID), bind DIDs to inbound workflows, and paste the single WSS URL into the VoiceLink portal.
+description: Guide configuring VoiceLink after install — fill the Settings → Telephony card (credentials only), bind DIDs to inbound workflows, and paste the single WSS URL into the VoiceLink portal.
 ---
 
 # /voicelink-configure
@@ -20,15 +20,16 @@ with `https`→`wss`. **This is the only URL VoiceLink needs — one URL, both d
 
 ## 2. Settings → Telephony card (in the Dograh UI)
 
-Walk the user through **Settings → Telephony → Add telephony configuration → VoiceLink**:
+Walk the user through **Settings → Telephony → Add telephony configuration → VoiceLink**.
+The card is **credentials only**:
 
 | Field | Value | Note |
 |---|---|---|
-| **API Base URL** | `https://app.voicelink.co.in/api` (or theirs) | VoiceLink REST API — **NOT** the WSS URL |
 | **Username + Password** | VoiceLink login | Lets tokens auto-refresh on 401 |
 | **Bearer Token** | (alternative to user/pass) | Static; no auto-refresh |
-| **DID Number** | e.g. `919484959244` | Registered form; outbound caller id |
-| **Phone Numbers** | (not shown on the add form) | Manage DIDs on the config detail page instead |
+
+No API base or DID field: `api_base` defaults to `https://app.voicelink.co.in/api` in the
+schema, and the outbound caller id is supplied per call.
 
 Save (requires either bearer_token OR username+password). Then on the config detail page,
 add each DID and **bind it to an inbound workflow** — this is what makes inbound routing

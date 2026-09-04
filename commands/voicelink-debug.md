@@ -18,9 +18,11 @@ read the actual output, then decide. Full detail in `references/debugging.md`.
    (Caddy/nginx) passes the **WebSocket upgrade** on `/api/v1/telephony/ws`.
 3. **Outbound fails immediately?**
    Read the api logs for the `add_lead` payload. `customer_number` must be **bare
-   10-digit** (carrier rejects 91-prefixed customer numbers, Q.850 cause 38). Check the
-   `did_number` is in registered form and credentials validate (`bearer_token` OR
-   `username`+`password`). A 401 with bearer-only config means the token expired and
+   10-digit** (carrier rejects 91-prefixed customer numbers, Q.850 cause 38). The
+   `did_number` comes from the per-call `from_number` and is **required** by VoiceLink's
+   `add_lead` — if `initiate_call` raises `ValueError` about a missing `from_number`,
+   bind a DID / phone number to the campaign. Check credentials validate (`bearer_token`
+   OR `username`+`password`). A 401 with bearer-only config means the token expired and
    there's no username/password to re-login.
 4. **Inbound not routing?**
    Read the logged raw `start` frame (`VoiceLink INBOUND start frame (raw): …`). Confirm
@@ -48,8 +50,8 @@ read the actual output, then decide. Full detail in `references/debugging.md`.
 - Webhooks are **unsigned** — the DID match is the only inbound authorization boundary.
 - `get_call_status` → `"unknown"`, `get_call_cost` → zeros, `transfer_call` →
   `NotImplementedError` (no per-call status/cost/transfer API wired).
-- `_config_loader` does not pass through `client_id` (optional hardening; see
-  `references/debugging.md`).
+- The card is credentials-only: no `api_base`, `did_number`, or `from_numbers` fields.
+  `api_base` defaults in the schema; the outbound caller id is the per-call `from_number`.
 
 Report findings layer by layer. Don't propose a fix before you've read the log/probe that
 localizes the failure (systematic debugging).

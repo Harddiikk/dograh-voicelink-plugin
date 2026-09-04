@@ -16,8 +16,6 @@ def _provider(**overrides) -> VoiceLinkProvider:
         "username": "reseller-user",
         "password": "placeholder-password",
         "bearer_token": None,
-        "did_number": "919484959244",
-        "from_numbers": ["919484959244"],
     }
     config.update(overrides)
     return VoiceLinkProvider(config)
@@ -86,6 +84,7 @@ async def test_initiate_call_sends_bare_local_number_and_registered_did():
             to_number="+91 73404 00524",
             webhook_url="https://example.test/api/v1/telephony/voicelink/events",
             workflow_run_id=123,
+            from_number="919484959244",
             workflow_id=7,
             user_id=11,
         )
@@ -97,7 +96,7 @@ async def test_initiate_call_sends_bare_local_number_and_registered_did():
 
     # ⚠️ customer_number must be the BARE 10-digit local number
     assert payload["customer_number"] == "7340400524"
-    # did_number keeps its registered (91-prefixed) form
+    # did_number comes from from_number and keeps its registered (91-prefixed) form
     assert payload["did_number"] == "919484959244"
     assert payload["websocket_url"] == (
         "wss://example.test/api/v1/telephony/ws/7/11/123"
@@ -117,7 +116,7 @@ async def test_initiate_call_sends_bare_local_number_and_registered_did():
 
 
 @pytest.mark.asyncio
-async def test_initiate_call_prefers_explicit_from_number():
+async def test_initiate_call_uses_explicit_from_number_as_did():
     provider = _provider()
 
     with (
@@ -142,8 +141,29 @@ async def test_initiate_call_prefers_explicit_from_number():
         )
 
     _, _, payload = api_request.await_args.args
-    # Explicit caller id wins; formatting stripped but 91 prefix kept.
+    # Caller id is the from_number; formatting stripped but 91 prefix kept.
     assert payload["did_number"] == "919876543210"
+
+
+@pytest.mark.asyncio
+async def test_initiate_call_rejects_missing_caller_id():
+    """VoiceLink's add_lead requires a non-empty did_number — with no
+    from_number to derive it from, fail before calling the API."""
+    provider = _provider()
+
+    with patch(
+        "api.services.telephony.providers.voicelink.provider.get_backend_endpoints",
+        new_callable=AsyncMock,
+        return_value=("https://example.test", "wss://example.test"),
+    ):
+        with pytest.raises(ValueError):
+            await provider.initiate_call(
+                to_number="7340400524",
+                webhook_url="unused",
+                workflow_run_id=123,
+                workflow_id=7,
+                user_id=11,
+            )
 
 
 @pytest.mark.asyncio
@@ -167,6 +187,7 @@ async def test_initiate_call_raises_on_provider_error():
                 to_number="7340400524",
                 webhook_url="unused",
                 workflow_run_id=123,
+                from_number="919876543210",
                 workflow_id=7,
                 user_id=11,
             )
@@ -343,7 +364,3 @@ def test_validate_config_accepts_bearer_token_only():
 def test_validate_config_rejects_missing_auth():
     provider = _provider(username=None, password=None, bearer_token=None)
     assert provider.validate_config() is False
-
-
-def test_validate_config_rejects_missing_did():
-    assert _provider(did_number=None).validate_config() is False

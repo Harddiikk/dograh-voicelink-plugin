@@ -89,19 +89,15 @@ class VoiceLinkProvider(TelephonyProvider):
                 - api_base: VoiceLink API base URL
                 - username / password: login credentials (enable token refresh)
                 - bearer_token: optional static bearer token
-                - did_number: registered DID used as caller id (e.g. 919484959244)
-                - from_numbers: list of DID addresses attached to the config
+
+            The outbound caller id (DID) is not stored on the config — it is
+            supplied per call via the ``from_number`` argument to
+            ``initiate_call``.
         """
         self.api_base = (config.get("api_base") or self.DEFAULT_API_BASE).rstrip("/")
         self.username = config.get("username")
         self.password = config.get("password")
         self.bearer_token = config.get("bearer_token")
-        self.did_number = config.get("did_number")
-        self.from_numbers = config.get("from_numbers", [])
-
-        # Handle both single number (string) and multiple numbers (list)
-        if isinstance(self.from_numbers, str):
-            self.from_numbers = [self.from_numbers]
 
         self._access_token: Optional[str] = self.bearer_token or None
 
@@ -123,6 +119,7 @@ class VoiceLinkProvider(TelephonyProvider):
             async with session.post(
                 endpoint,
                 json={"username": self.username, "password": self.password},
+                headers={"Accept": "application/json"},
             ) as response:
                 body = await response.text()
                 if response.status not in (200, 201):
@@ -164,6 +161,9 @@ class VoiceLinkProvider(TelephonyProvider):
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            # VoiceLink is a Laravel API — without this it renders HTML error
+            # pages (and 302s to a login page) instead of JSON on 4xx/5xx.
+            "Accept": "application/json",
         }
         async with aiohttp.ClientSession() as session:
             async with session.request(
@@ -209,7 +209,8 @@ class VoiceLinkProvider(TelephonyProvider):
         VoiceLink differences from REST providers like Twilio:
         - ``customer_number`` must be the bare 10-digit local number (a
           91-prefixed number fails at the carrier with Q.850 cause 38).
-        - ``did_number`` keeps its registered form (e.g. "919484959244").
+        - ``did_number`` (the caller id) comes from the ``from_number``
+          argument and keeps its registered form (e.g. "919484959244").
         - The response carries an ``outbound_queue_id`` only — the real call
           id (uuid) arrives later via webhook events and the WS start event.
         - ``websocket_url``/``webhook_url`` are passed inline per call, so
@@ -235,10 +236,16 @@ class VoiceLinkProvider(TelephonyProvider):
             )
 
         # DID keeps its registered (91-prefixed) form; only strip formatting.
-        did_source = from_number or self.did_number or (
-            self.from_numbers[0] if self.from_numbers else ""
-        )
-        did_number = re.sub(r"\D", "", did_source)
+        # It is supplied per call (no config-level fallback) and VoiceLink's
+        # POST /v1/add_lead *requires* a non-empty did_number — fail early with a
+        # clear message rather than sending "" and getting an opaque 422.
+        did_number = re.sub(r"\D", "", from_number or "")
+        if not did_number:
+            raise ValueError(
+                "VoiceLink outbound call has no caller id: pass a from_number "
+                "(bind a DID / phone number to this campaign). VoiceLink's "
+                "add_lead rejects an empty did_number."
+            )
         logger.info(f"Selected VoiceLink DID {did_number} for outbound call")
 
         backend_endpoint, wss_backend_endpoint = await get_backend_endpoints()
@@ -319,15 +326,14 @@ class VoiceLinkProvider(TelephonyProvider):
         return {"call_id": call_id, "status": "unknown"}
 
     async def get_available_phone_numbers(self) -> List[str]:
-        """Get list of available VoiceLink DID numbers."""
-        if self.from_numbers:
-            return self.from_numbers
-        return [self.did_number] if self.did_number else []
+        """VoiceLink DIDs are managed as ``telephony_phone_numbers`` rows, not
+        on the provider config."""
+        return []
 
     def validate_config(self) -> bool:
         """Validate VoiceLink configuration."""
         has_auth = bool(self.bearer_token or (self.username and self.password))
-        return bool(self.api_base and self.did_number and has_auth)
+        return bool(self.api_base and has_auth)
 
     async def verify_webhook_signature(
         self, url: str, params: Dict[str, Any], signature: str

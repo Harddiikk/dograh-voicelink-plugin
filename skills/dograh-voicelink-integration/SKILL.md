@@ -31,9 +31,10 @@ wss://<your-public-host>/api/v1/telephony/ws
   automatically inside the `add_lead` request — nothing to configure per call.
 
 The host comes from the env var **`BACKEND_API_ENDPOINT`** (`https://` → `wss://`).
-There is **no WSS field in the Dograh telephony card**. The card's "API Base URL"
-placeholder (`https://app.voicelink.co.in/api`) is VoiceLink's REST API, a *different*
-thing. See `references/single-wss-url.md` — internalize this before configuring, or you
+There is **no WSS field in the Dograh telephony card** — the card takes only VoiceLink
+credentials. VoiceLink's REST API base (`https://app.voicelink.co.in/api`) is the
+`api_base` schema default, not a card field, and a *different* thing from the WSS URL.
+See `references/single-wss-url.md` — internalize this before configuring, or you
 will hunt for a field that does not exist.
 
 ## Workflow
@@ -107,19 +108,22 @@ metadata. Drive it via `/voicelink-verify`.
 ### Step 5 — Configure the Settings → Telephony card
 
 In the Dograh UI, **Settings → Telephony → Add telephony configuration**, choose
-**VoiceLink**, and fill in (these are the *real* card fields — none of them is the WSS URL):
+**VoiceLink**, and fill in the card — it is **credentials only** (three fields, none of
+them the WSS URL):
 
 | Field | What to enter |
 |---|---|
-| **API Base URL** | VoiceLink REST API base (placeholder `https://app.voicelink.co.in/api`) |
 | **Username + Password** *or* **Bearer Token** | VoiceLink credentials (username/password lets tokens auto-refresh) |
-| **DID Number** | Your DID in registered form, e.g. `919484959244` (used as outbound caller id) |
 
-(The metadata also defines a "Phone Numbers" / `from_numbers` field, but the add-config
-form does **not** render it — DIDs are managed separately, below.)
+`api_base` is not on the card — it defaults to `https://app.voicelink.co.in/api` in the
+schema. There is **no DID / Phone Numbers field**: the outbound caller id is supplied
+per call (`from_number`), and inbound DIDs are managed separately, below. VoiceLink's
+`add_lead` still requires a `did_number`, so a DID must be bound to the campaign for
+outbound calls — otherwise `initiate_call` raises a clear `ValueError`.
 
 Save. Then on the config detail page, add DIDs and bind each to an **inbound workflow**
-(this creates the `telephony_phone_numbers` row the inbound handler routes against).
+(this creates the `telephony_phone_numbers` row the inbound handler routes against). The
+same phone-number rows supply the outbound `from_number`.
 Full walkthrough: `references/telephony-card-guide.md`.
 
 ### Step 6 — Point VoiceLink at the single WSS URL

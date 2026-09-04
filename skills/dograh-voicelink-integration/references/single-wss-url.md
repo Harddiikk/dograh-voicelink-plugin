@@ -46,18 +46,19 @@ So **the single WSS URL = `BACKEND_API_ENDPOINT` (https→wss) + `/api/v1/teleph
 
 ## ⚠️ The placeholder confusion (read this)
 
-There is **no field in the Dograh telephony card where you paste the WSS URL.** People
-look for one because the card *does* have a URL-shaped placeholder — but that is the
-**API Base URL** (`https://app.voicelink.co.in/api`), which is VoiceLink's **REST API**
-(the direction *Dograh → VoiceLink*, for `add_lead`/login). It is **not** the media WSS
-URL (the direction *VoiceLink → Dograh*, for audio). Do not paste the WSS URL there.
+There is **no field in the Dograh telephony card where you paste the WSS URL.** The card
+takes only VoiceLink credentials (`username`/`password` or `bearer_token`) — no URLs at
+all. VoiceLink's **REST API base** `https://app.voicelink.co.in/api` (the direction
+*Dograh → VoiceLink*, for `add_lead`/login) lives in the schema as the `api_base` default
+and is not shown on the card. It is **not** the media WSS URL (the direction
+*VoiceLink → Dograh*, for audio). Neither URL goes on the card.
 
 Two different URLs, two different places:
 
 | URL | Direction | Where it goes |
 |---|---|---|
 | `wss://<host>/api/v1/telephony/ws` | VoiceLink → Dograh (audio) | **VoiceLink portal** (inbound bot/stream URL); set `BACKEND_API_ENDPOINT` so it's derived |
-| `https://app.voicelink.co.in/api` | Dograh → VoiceLink (dial/login) | **Dograh telephony card** → "API Base URL" field |
+| `https://app.voicelink.co.in/api` | Dograh → VoiceLink (dial/login) | schema default for `api_base` — not a card field |
 
 ## End-to-end data flow
 

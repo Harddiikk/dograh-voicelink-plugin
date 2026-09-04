@@ -14,20 +14,28 @@ editing an existing config).
 
 ## Fields (what the card renders for VoiceLink)
 
-These come from `_UI_METADATA` in `providers/voicelink/__init__.py`:
+These come from `_UI_METADATA` in `providers/voicelink/__init__.py`. The card is
+**credentials only** — three fields:
 
-| Field | Type | Required | Placeholder / note |
+| Field | Type | Required | Note |
 |---|---|---|---|
-| **API Base URL** | text | no | `https://app.voicelink.co.in/api` — VoiceLink's REST API base (dial/login). **NOT the WSS URL.** Defaults to this if left blank. |
-| **Username** | password (masked) | no* | VoiceLink account username. Provide username+password so expired tokens auto-refresh. |
+| **Username** | text (masked) | no* | VoiceLink account username. Provide username+password so expired tokens auto-refresh. |
 | **Password** | password (masked) | no* | VoiceLink account password. |
 | **Bearer Token** | password (masked) | no* | Static token; optional when username+password are set (no auto-refresh on expiry). |
-| **DID Number** | text | **yes** | Your DID in registered form, e.g. `919484959244`. Used as the outbound caller id. |
-| **Phone Numbers** | string-array | no | `from_numbers` — defined in metadata but **not rendered by the add-config form**. Manage DIDs on the config detail page instead (see below). |
-| **Client ID** | text | no | VoiceLink client id, passed through to the outbound `add_lead` call's `provider_metadata`. ⚠️ A known `_config_loader` gap currently drops it before `add_lead` — see `debugging.md`. |
 
 \* **Credential rule:** the config requires **either** a `bearer_token` **or** both
 `username` **and** `password`. Saving with neither is rejected.
+
+> **No API Base URL field.** `api_base` still exists in the schema and defaults to
+> `https://app.voicelink.co.in/api` (VoiceLink's REST base for dial/login). It is not
+> exposed on the card; override it in the stored `config` JSONB directly if a different
+> base is ever needed.
+
+> **No DID / Phone Numbers field.** The outbound caller id is supplied per call (the
+> `from_number` passed to `initiate_call`), and inbound DIDs are managed as
+> `telephony_phone_numbers` rows on the config detail page (see below) — not on this card.
+> VoiceLink's `add_lead` still **requires** a `did_number`, so a DID must be bound to the
+> campaign for outbound to work — `initiate_call` raises `ValueError` if none is passed.
 
 > There is deliberately **no WSS-URL field** here. The media WSS URL is derived from
 > `BACKEND_API_ENDPOINT` and pasted into the VoiceLink portal, not into this card. See
@@ -39,8 +47,7 @@ The form `POST`s `createTelephonyConfigurationApiV1OrganizationsTelephonyConfigs
 (or `PUT …/{id}` on edit) with body:
 ```json
 { "name": "VoiceLink prod", "is_default_outbound": true,
-  "config": { "provider": "voicelink", "api_base": "...", "username": "...",
-              "password": "...", "did_number": "919484959244", "from_numbers": ["..."] } }
+  "config": { "provider": "voicelink", "username": "...", "password": "..." } }
 ```
 The `config` is validated against the discriminated union the overlay wired into
 `api/schemas/telephony_config.py` (dispatch on `provider: "voicelink"`). If that schema

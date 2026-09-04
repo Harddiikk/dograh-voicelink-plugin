@@ -30,7 +30,10 @@ Read the api log for the `add_lead` payload (logged at INFO — did / customer /
 - **`customer_number` must be bare 10-digit** local (no `91`). A 91-prefixed customer
   number is rejected by the carrier with **Q.850 cause 38**. (Normalization strips a
   12-digit `91…` and an 11-digit `0…`; a literal 10-digit number is left as-is.)
-- `did_number` keeps its registered (91-prefixed) form — it's the caller id.
+- `did_number` in the payload is the per-call `from_number` (kept in its registered,
+  91-prefixed form) — it's the caller id. VoiceLink's `add_lead` **requires** it, so
+  `initiate_call` raises `ValueError` when no `from_number` is supplied (bind a DID /
+  phone number to the campaign).
 - **Auth:** config needs `bearer_token` OR `username`+`password`. With **bearer-only**, an
   expired token returns 401 and there's **no re-login** (no creds) — switch to
   username/password so the one-shot 401 re-login retry can refresh the token. The password
@@ -80,9 +83,12 @@ docker compose logs -f caddy    # TLS issuance + WS-upgrade problems
 - **No per-call status/cost; no transfers.** `get_call_status` → `"unknown"`,
   `get_call_cost` → zeros, `transfer_call` → `NotImplementedError`,
   `supports_transfers()` → `False`. Wire these if VoiceLink exposes the APIs.
-- **`_config_loader` omits `client_id`** even though config + UI metadata define it — so
-  `client_id` never reaches `add_lead`. If you need it, add `"client_id":
-  value.get("client_id")` to `_config_loader` in `providers/voicelink/__init__.py`.
+- **Card is credentials-only.** `_UI_METADATA` renders just `username` / `password` /
+  `bearer_token`; `api_base` defaults in the schema and is not exposed, and there are no
+  `did_number` / `from_numbers` / `client_id` fields. The outbound caller id is the
+  per-call `from_number`; inbound DIDs live in `telephony_phone_numbers`. If you ever need
+  `client_id` on `add_lead`, re-add it to `config.py`, `_UI_METADATA`, and `_config_loader`
+  in `providers/voicelink/`.
 - **Recording URL spelling guessed** — read from `recordingUrl` or `recording_url`
   defensively; confirm against a real event.
 - **No synthetic end-to-end WS healthcheck** beyond the `verify.sh` upgrade probe;

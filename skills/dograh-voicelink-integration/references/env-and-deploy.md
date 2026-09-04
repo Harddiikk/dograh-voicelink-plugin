@@ -19,9 +19,9 @@ Derived at runtime:
 
 ## Per-organization credentials are NOT env vars
 
-The per-call VoiceLink credentials — `api_base`, `username`/`password` or `bearer_token`,
-`did_number`, `from_numbers`, `client_id` — live in the **DB** (`telephony_configurations`,
-JSONB `config`), set via the Settings → Telephony card. They are per-org, not env.
+The VoiceLink credentials — `username`/`password` or `bearer_token` (and `api_base`, which
+defaults and is not on the card) — live in the **DB** (`telephony_configurations`, JSONB
+`config`), set via the Settings → Telephony card. They are per-org, not env.
 
 ## Optional env vars (only for extras you probably don't need)
 
