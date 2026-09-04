@@ -13,7 +13,7 @@ and `references/single-wss-url.md`.
 Derive from their public origin and show both forms:
 ```
 Inbound  (paste in VoiceLink portal):  wss://<host>/api/v1/telephony/ws
-Outbound (Dograh sends automatically): wss://<host>/api/v1/telephony/ws/{workflow_id}/{user_id}/{workflow_run_id}
+Outbound (Dograh sends automatically): wss://<host>/api/v1/telephony/ws/{workflow_id}/{organization_id}/{workflow_run_id}
 ```
 `scripts/verify.sh <base-url>` prints these exactly. The host = `BACKEND_API_ENDPOINT`
 with `https`→`wss`. **This is the only URL VoiceLink needs — one URL, both directions.**

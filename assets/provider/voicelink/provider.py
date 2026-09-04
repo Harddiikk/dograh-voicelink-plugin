@@ -6,6 +6,14 @@ through ``POST /v1/add_lead``; VoiceLink then connects back to our
 WebSocket endpoint for media (Twilio-media-streams-style JSON events,
 G.711 A-law 8 kHz) and POSTs nested-JSON call-lifecycle events to our
 webhook route.
+
+Targets the org-scoped telephony WebSocket contract Dograh shipped
+2026-09-04 (``dograh-hq/dograh@b1fc4e51``): the shared media WS route is
+``/ws/{workflow_id}/{organization_id}/{workflow_run_id}[/{token}]`` — the
+middle segment is the tenant, not the workflow owner — and
+``ws_auth.build_media_ws_url`` is the canonical way to build it (also picks
+up the optional HMAC capability token for free, backward-compatible when
+``TELEPHONY_WS_TOKEN_SECRET`` is unset). See ``references/integration-map.md``.
 """
 
 import json
@@ -17,9 +25,11 @@ from fastapi import HTTPException, WebSocketDisconnect
 from loguru import logger
 
 from api.enums import WorkflowRunMode
+from api.services.telephony import ws_auth
 from api.services.telephony.base import (
     CallInitiationResult,
     NormalizedInboundData,
+    ProviderSyncResult,
     TelephonyProvider,
 )
 from api.utils.common import get_backend_endpoints
@@ -231,11 +241,11 @@ class VoiceLinkProvider(TelephonyProvider):
             raise ValueError("VoiceLink provider not properly configured")
 
         workflow_id = kwargs.get("workflow_id")
-        user_id = kwargs.get("user_id")
-        if workflow_id is None or user_id is None or workflow_run_id is None:
+        organization_id = kwargs.get("organization_id")
+        if workflow_id is None or organization_id is None or workflow_run_id is None:
             raise ValueError(
-                "VoiceLink initiate_call requires workflow_id, user_id and "
-                "workflow_run_id to build the media WebSocket URL"
+                "VoiceLink initiate_call requires workflow_id, organization_id "
+                "and workflow_run_id to build the media WebSocket URL"
             )
 
         customer_number = normalize_customer_number(to_number)
@@ -267,9 +277,8 @@ class VoiceLinkProvider(TelephonyProvider):
 
         backend_endpoint, wss_backend_endpoint = await get_backend_endpoints()
 
-        websocket_url = (
-            f"{wss_backend_endpoint}/api/v1/telephony/ws"
-            f"/{workflow_id}/{user_id}/{workflow_run_id}"
+        websocket_url = ws_auth.build_media_ws_url(
+            wss_backend_endpoint, workflow_id, organization_id, workflow_run_id
         )
         events_url = (
             f"{backend_endpoint}/api/v1/telephony/voicelink/events/{workflow_run_id}"
@@ -281,7 +290,7 @@ class VoiceLinkProvider(TelephonyProvider):
             "custom_parameters": json.dumps(
                 {
                     "workflow_id": workflow_id,
-                    "user_id": user_id,
+                    "organization_id": organization_id,
                     "workflow_run_id": workflow_run_id,
                 }
             ),
@@ -364,7 +373,7 @@ class VoiceLinkProvider(TelephonyProvider):
         return True
 
     async def get_webhook_response(
-        self, workflow_id: int, user_id: int, workflow_run_id: int
+        self, workflow_id: int, organization_id: int, workflow_run_id: int
     ) -> str:
         """Not used for VoiceLink — the media WebSocket URL is passed inline
         with the ``add_lead`` request."""
@@ -415,11 +424,18 @@ class VoiceLinkProvider(TelephonyProvider):
         self,
         websocket: "WebSocket",
         workflow_id: int,
-        user_id: int,
+        organization_id: int,
         workflow_run_id: int,
     ) -> None:
         """
         Handle the VoiceLink media WebSocket connection.
+
+        Called by the shared dispatcher for OUTBOUND calls (VoiceLink dials
+        back the ``websocket_url`` from ``initiate_call``, which routes through
+        the generic ``/ws/{workflow_id}/{organization_id}/{workflow_run_id}``
+        endpoint). ``organization_id`` is the tenant the run is scoped to —
+        it is not a user id (the base class deliberately does not pass the
+        workflow owner here; see ``TelephonyProvider.handle_websocket``).
 
         VoiceLink connects to our ``websocket_url`` and sends:
         1. ``connected`` event on WebSocket open
@@ -471,7 +487,7 @@ class VoiceLinkProvider(TelephonyProvider):
                 provider_name=self.PROVIDER_NAME,
                 workflow_id=workflow_id,
                 workflow_run_id=workflow_run_id,
-                user_id=user_id,
+                organization_id=organization_id,
                 call_id=call_sid or stream_sid,
                 transport_kwargs={"stream_id": stream_sid, "call_id": call_sid},
             )
@@ -661,3 +677,17 @@ class VoiceLinkProvider(TelephonyProvider):
             False - VoiceLink provider does not support call transfers
         """
         return False
+
+    # ======== PHONE NUMBER OWNERSHIP ========
+
+    async def validate_phone_number(self, address: str) -> ProviderSyncResult:
+        """Accept any DID the operator adds.
+
+        VoiceLink has no documented account-inventory API to verify DID
+        ownership against (unlike Twilio/Plivo/Telnyx's number-list
+        endpoints) — probed the live REST API directly and found nothing
+        under `/v1/dids`, `/v1/numbers`, or similar. Same PBX-managed
+        opt-out as the ARI provider: the DID match at inbound-routing time
+        is the real authorization boundary, not this check.
+        """
+        return ProviderSyncResult(ok=True)

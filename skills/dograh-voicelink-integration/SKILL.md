@@ -27,7 +27,7 @@ wss://<your-public-host>/api/v1/telephony/ws
 - **Inbound** calls connect to that **bare** URL. Dograh reads the `start` frame,
   routes by the called DID, creates a run, and runs the pipeline.
 - **Outbound** calls use the **same** URL with the run identity appended:
-  `…/ws/{workflow_id}/{user_id}/{workflow_run_id}`. Dograh sends this to VoiceLink
+  `…/ws/{workflow_id}/{organization_id}/{workflow_run_id}`. Dograh sends this to VoiceLink
   automatically inside the `add_lead` request — nothing to configure per call.
 
 The host comes from the env var **`BACKEND_API_ENDPOINT`** (`https://` → `wss://`).

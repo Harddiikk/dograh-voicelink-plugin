@@ -77,7 +77,15 @@ SPEC = ProviderSpec(
     transport_sample_rate=8000,
     config_request_cls=VoiceLinkConfigurationRequest,
     ui_metadata=_UI_METADATA,
-    config_response_cls=VoiceLinkConfigurationResponse,
+    # No config_response_cls: current upstream (2026-09-04, dograh-hq/dograh
+    # @b1fc4e51) dropped the per-provider flat response class entirely —
+    # ProviderSpec no longer has that field at all, and passing it TypeErrors
+    # at construction, crashing registration for every provider (not just
+    # this one). Credentials are now masked generically into a plain dict
+    # (TelephonyConfigurationDetail.credentials) instead of a typed response
+    # model per provider. VoiceLinkConfigurationResponse still exists in
+    # config.py / __all__ below as a documented masked shape; nothing wires
+    # it in automatically any more.
     account_id_credential_field="username",
 )
 

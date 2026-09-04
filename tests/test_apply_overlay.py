@@ -68,7 +68,34 @@ __all__ = [
 """
 
 
-def write_fixture(root: Path, *, trailing_comma: bool, tab_enum: bool = False) -> None:
+# Current upstream schema shape (2026-09-04, dograh-hq/dograh@b1fc4e51): the
+# flat TelephonyConfigurationResponse class is gone — credentials are masked
+# generically elsewhere. Only the discriminated Request union remains here.
+TELE_CONFIG_NEW_SHAPE = """\
+from typing import Annotated, Union
+
+from pydantic import Field
+
+from api.services.telephony.providers.twilio.config import (
+    TwilioConfigurationRequest,
+)
+
+TelephonyConfigRequest = Annotated[
+    Union[
+        TwilioConfigurationRequest{trail}
+    ],
+    Field(discriminator="provider"),
+]
+
+
+__all__ = [
+    "TwilioConfigurationRequest"{trail}
+]
+"""
+
+
+def write_fixture(root: Path, *, trailing_comma: bool, tab_enum: bool = False,
+                   new_schema_shape: bool = False) -> None:
     trail = "," if trailing_comma else ""
     (root / "api" / "services" / "telephony" / "providers").mkdir(parents=True, exist_ok=True)
     (root / "api" / "schemas").mkdir(parents=True, exist_ok=True)
@@ -78,8 +105,9 @@ def write_fixture(root: Path, *, trailing_comma: bool, tab_enum: bool = False) -
     (root / "api" / "enums.py").write_text(enums)
     (root / "api" / "services" / "telephony" / "providers" / "__init__.py").write_text(
         PROVIDERS_INIT.format(trail=trail))
+    schema = TELE_CONFIG_NEW_SHAPE if new_schema_shape else TELE_CONFIG
     (root / "api" / "schemas" / "telephony_config.py").write_text(
-        TELE_CONFIG.format(trail=trail))
+        schema.format(trail=trail))
 
 
 def run(root: Path, *extra: str) -> subprocess.CompletedProcess:
@@ -126,6 +154,27 @@ def assert_wired(root: Path) -> list[str]:
     return errs
 
 
+def assert_wired_new_shape(root: Path) -> list[str]:
+    """Same checks as ``assert_wired``, minus the response-field ones that
+    don't apply to the current-upstream schema (no response class at all)."""
+    errs: list[str] = []
+    tc = ast.parse((root / "api/schemas/telephony_config.py").read_text())
+    src = (root / "api/schemas/telephony_config.py").read_text()
+    if "class TelephonyConfigurationResponse" in src:
+        errs.append("fixture regression: new-shape file grew a response class")
+    union_src = src.split("Annotated[")[1].split("]")[0]
+    if "VoiceLinkConfigurationRequest" not in union_src:
+        errs.append("schema: VoiceLink not in discriminated union")
+    alls = [n for n in ast.walk(tc) if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)]
+    exports = {e.value for e in alls[0].value.elts if isinstance(e, ast.Constant)} if alls else set()
+    if "VoiceLinkConfigurationRequest" not in exports:
+        errs.append("schema: __all__ missing VoiceLinkConfigurationRequest")
+    if "TwilioConfigurationRequest" not in exports:
+        errs.append("schema: original __all__ export was mangled")
+    return errs
+
+
 def case(name: str, fn) -> bool:
     try:
         fn()
@@ -158,6 +207,24 @@ def main() -> int:
                 assert "+ add" not in r2.stdout and "+ wire" not in r2.stdout, \
                     f"not idempotent:\n{r2.stdout}"
         results.append(case(tc_name, _t))
+
+    def _new_schema_shape():
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            write_fixture(root, trailing_comma=True, new_schema_shape=True)
+            r = run(root)
+            assert r.returncode == 0, f"exit {r.returncode}\n{r.stdout}\n{r.stderr}"
+            assert "✗" not in r.stdout, f"a step failed on the new schema shape:\n{r.stdout}"
+            assert "not applicable" in r.stdout, \
+                f"expected the response-field edit to report not-applicable:\n{r.stdout}"
+            errs = assert_wired_new_shape(root)
+            assert not errs, "; ".join(errs)
+            # idempotent here too
+            r2 = run(root)
+            assert r2.returncode == 0, f"rerun exit {r2.returncode}\n{r2.stdout}"
+            assert "+ add" not in r2.stdout and "+ wire" not in r2.stdout, \
+                f"not idempotent:\n{r2.stdout}"
+    results.append(case("current-upstream schema shape (no response class)", _new_schema_shape))
 
     def _rollback():
         with tempfile.TemporaryDirectory() as d:

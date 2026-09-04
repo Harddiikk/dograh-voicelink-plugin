@@ -78,7 +78,7 @@ layouts. The Docker path builds a derived image with a **build-time compile-chec
 | `wss://<host>/api/v1/telephony/ws` | VoiceLink → Dograh (call audio, **in + out**) | **VoiceLink portal** — derived from `BACKEND_API_ENDPOINT` (`https`→`wss`) |
 | `https://app.voicelink.co.in/api` | Dograh → VoiceLink (dial / login) | schema default for `api_base` — **not** on the telephony card |
 
-- **Inbound** connects to the bare `…/ws`; **outbound** uses `…/ws/{workflow_id}/{user_id}/{workflow_run_id}` (Dograh sends it automatically per call).
+- **Inbound** connects to the bare `…/ws`; **outbound** uses `…/ws/{workflow_id}/{organization_id}/{workflow_run_id}` (Dograh sends it automatically per call).
 - Set `BACKEND_API_ENDPOINT` to a public **`https://`** origin, and make sure your reverse
   proxy passes the **WebSocket upgrade** on `/api/v1/telephony/ws`. No TURN needed.
 

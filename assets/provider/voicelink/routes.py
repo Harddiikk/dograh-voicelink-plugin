@@ -99,10 +99,13 @@ async def voicelink_inbound_ws(websocket: WebSocket) -> None:
     """VoiceLink WS-only INBOUND entrypoint.
 
     VoiceLink uses ONE media WebSocket for both directions. Outbound calls
-    connect to ``/ws/{workflow_id}/{user_id}/{workflow_run_id}`` (the run is
-    pre-created by add_lead). INBOUND calls connect here to the bare bot URL
-    (``/api/v1/telephony/ws``) with NO run id, so we read the ``start`` event,
-    route by the called DID, create an inbound run, and run the pipeline.
+    connect to ``/ws/{workflow_id}/{organization_id}/{workflow_run_id}`` (the
+    run is pre-created by add_lead; the middle segment is the tenant, not a
+    user id — see ``ws_auth.build_media_ws_url``) via the shared dispatcher,
+    which routes to ``VoiceLinkProvider.handle_websocket``. INBOUND calls
+    connect here instead, to the bare bot URL (``/api/v1/telephony/ws``) with
+    NO run id at all, so this handler reads the ``start`` event, routes by the
+    called DID, creates the run itself, and runs the pipeline directly.
 
     NOTE: the exact location of the called/caller number in VoiceLink's inbound
     ``start`` event is unconfirmed upstream — the full start frame is logged so
@@ -243,6 +246,7 @@ async def voicelink_inbound_ws(websocket: WebSocket) -> None:
         run_id = await _create_inbound_workflow_run(
             workflow_id,
             user_id,
+            config.organization_id,
             "voicelink",
             normalized,
             telephony_configuration_id=config.id,
@@ -262,7 +266,7 @@ async def voicelink_inbound_ws(websocket: WebSocket) -> None:
             provider_name="voicelink",
             workflow_id=workflow_id,
             workflow_run_id=run_id,
-            user_id=user_id,
+            organization_id=config.organization_id,
             call_id=call_sid or stream_sid or "",
             transport_kwargs={"stream_id": stream_sid, "call_id": call_sid},
         )

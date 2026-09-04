@@ -13,7 +13,9 @@ exactly the proven, non-breaking changes used in production:
      tuple in ``<root>/api/services/telephony/providers/__init__.py``.
   4. Wire the config schema into the discriminated union in
      ``<root>/api/schemas/telephony_config.py`` (import + union member +
-     response field + ``__all__``).
+     ``__all__``; plus a response field, only on the older Dograh schema
+     shape that still has a flat ``TelephonyConfigurationResponse`` class —
+     current upstream masks credentials generically and needs no such field).
   (optional) Copy the pytest suite into ``<root>/api/tests/telephony/voicelink/``.
 
 It does NOT touch Alembic, KYC/SaaS, or any migration — ``provider`` is a
@@ -75,6 +77,12 @@ class Report:
 
     def skip(self, msg: str) -> None:
         self.lines.append(f"  = {msg} (already present)")
+
+    def na(self, msg: str) -> None:
+        """Not applicable to this target — distinct from ``skip``'s "already
+        present": there is nothing here to wire at all (e.g. an edit for a
+        class shape the target file doesn't use)."""
+        self.lines.append(f"  = {msg} (not applicable)")
 
     def change(self, msg: str) -> None:
         self.lines.append(f"  + {msg}")
@@ -340,13 +348,21 @@ def edit_schema(root: Path, dry: bool, rep: Report) -> None:
                              ["VoiceLinkConfigurationRequest,"], indent)
             changed = True
 
-    # (c) response field
+    # (c) response field — only applies to the older schema shape, where a
+    # flat TelephonyConfigurationResponse class carries one Optional field
+    # per provider. Current upstream (2026-09-04, dograh-hq/dograh@b1fc4e51)
+    # removed that class entirely: credentials are now masked generically
+    # into TelephonyConfigurationDetail.credentials (a plain dict), and no
+    # provider's __init__.py wires a response class into ProviderSpec any
+    # more. So when the class isn't found, that's not a broken target file —
+    # it's the newer schema shape, which needs no response-field edit at
+    # all. Skip cleanly instead of failing the whole overlay over it.
     if not any("voicelink: Optional[VoiceLinkConfigurationResponse]" in ln for ln in lines):
         cls = next((i for i, ln in enumerate(lines)
                     if ln.startswith("class TelephonyConfigurationResponse")), None)
         if cls is None:
-            rep.fail("TelephonyConfigurationResponse class not found",
-                     "03-telephony-config-schema.md")
+            rep.na("response field: no TelephonyConfigurationResponse class — "
+                   "newer schema (generic credentials dict), nothing to wire")
         else:
             field_idx = next(
                 (i for i in range(cls + 1, len(lines))

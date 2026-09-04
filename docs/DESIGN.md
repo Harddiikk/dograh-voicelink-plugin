@@ -46,7 +46,7 @@ as optional in the references).
 ## The single WSS URL — and the premise correction
 
 VoiceLink uses **one WSS URL for both directions**: `wss://<host>/api/v1/telephony/ws`
-(inbound = bare; outbound = `…/ws/{workflow_id}/{user_id}/{workflow_run_id}`, sent inline
+(inbound = bare; outbound = `…/ws/{workflow_id}/{organization_id}/{workflow_run_id}`, sent inline
 per call). This is true and is the plugin's headline.
 
 The important correction baked into the design: that WSS URL is **not** a field in the
@@ -116,6 +116,12 @@ case in the suite.
   factory turns into the outbound `from_numbers`.
 - Inbound `start`-frame field names are "unconfirmed upstream" — the handler `pick()`s
   across spellings and logs the raw frame; confirm against a real inbound call.
+- **Pinned to current upstream** (2026-09-04, `dograh-hq/dograh@b1fc4e51`): the media WS
+  is scoped by `organization_id` (not `user_id`) end-to-end and carries an optional HMAC
+  capability token via `ws_auth`; every provider now needs `validate_phone_number`
+  (VoiceLink opts out, no ownership API to check against); `ProviderSpec.config_response_cls`
+  is gone (credentials mask into a generic dict). See `integration-map.md`'s "known gaps"
+  for the full detail and what changes on an older Dograh checkout.
 
 These are documented in `references/debugging.md` as optional hardening so the plugin
 matches reality rather than papering over it.

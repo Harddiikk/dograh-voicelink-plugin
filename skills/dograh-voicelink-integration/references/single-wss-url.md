@@ -16,7 +16,7 @@ The two directions differ in only two ways:
 
 | | Inbound | Outbound |
 |---|---|---|
-| **Path** | bare `…/ws` | `…/ws/{workflow_id}/{user_id}/{workflow_run_id}` |
+| **Path** | bare `…/ws` | `…/ws/{workflow_id}/{organization_id}/{workflow_run_id}` |
 | **Run** | created on the fly: read `start` frame → route by called DID → create run | already created at dial time; identity is in the path |
 | **Served by** | `providers/voicelink/routes.py` `@router.websocket("/ws")` | the generic `api/routes/telephony.py` `/ws/{…}` route |
 
@@ -33,7 +33,7 @@ It is derived at runtime from the env var `BACKEND_API_ENDPOINT` by swapping the
 # api/utils/common.py :: get_backend_endpoints()
 ws_scheme = {"http": "ws", "https": "wss"}[scheme]
 ws_url = BACKEND_API_ENDPOINT.rstrip("/").replace(scheme, ws_scheme, 1)
-# then: f"{ws_url}/api/v1/telephony/ws" (+ "/{workflow_id}/{user_id}/{workflow_run_id}" for outbound)
+# then: f"{ws_url}/api/v1/telephony/ws" (+ "/{workflow_id}/{organization_id}/{workflow_run_id}" for outbound)
 ```
 
 So **the single WSS URL = `BACKEND_API_ENDPOINT` (https→wss) + `/api/v1/telephony/ws`.**

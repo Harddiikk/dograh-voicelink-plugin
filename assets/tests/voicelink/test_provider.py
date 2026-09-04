@@ -91,7 +91,7 @@ async def test_initiate_call_sends_bare_local_number_and_registered_did():
             workflow_run_id=123,
             from_number="919484959244",
             workflow_id=7,
-            user_id=11,
+            organization_id=42,
         )
 
     api_request.assert_awaited_once()
@@ -104,14 +104,14 @@ async def test_initiate_call_sends_bare_local_number_and_registered_did():
     # did_number comes from from_number and keeps its registered (91-prefixed) form
     assert payload["did_number"] == "919484959244"
     assert payload["websocket_url"] == (
-        "wss://example.test/api/v1/telephony/ws/7/11/123"
+        "wss://example.test/api/v1/telephony/ws/7/42/123"
     )
     assert payload["webhook_url"] == (
         "https://example.test/api/v1/telephony/voicelink/events/123"
     )
     # custom_parameters is a JSON string
     custom = json.loads(payload["custom_parameters"])
-    assert custom == {"workflow_id": 7, "user_id": 11, "workflow_run_id": 123}
+    assert custom == {"workflow_id": 7, "organization_id": 42, "workflow_run_id": 123}
 
     assert result.call_id == "991"
     assert result.status == "queued"
@@ -142,7 +142,7 @@ async def test_initiate_call_uses_explicit_from_number_as_did():
             workflow_run_id=123,
             from_number="+919876543210",
             workflow_id=7,
-            user_id=11,
+            organization_id=42,
         )
 
     _, _, payload = api_request.await_args.args
@@ -167,7 +167,7 @@ async def test_initiate_call_rejects_missing_caller_id():
                 webhook_url="unused",
                 workflow_run_id=123,
                 workflow_id=7,
-                user_id=11,
+                organization_id=42,
             )
 
 
@@ -193,7 +193,7 @@ async def test_initiate_call_falls_back_to_configured_did():
             webhook_url="unused",
             workflow_run_id=123,
             workflow_id=7,
-            user_id=11,
+            organization_id=42,
         )
 
     _, _, payload = api_request.await_args.args
@@ -223,7 +223,7 @@ async def test_initiate_call_raises_on_provider_error():
                 workflow_run_id=123,
                 from_number="919876543210",
                 workflow_id=7,
-                user_id=11,
+                organization_id=42,
             )
 
     assert exc_info.value.status_code == 422
@@ -238,6 +238,22 @@ async def test_initiate_call_requires_routing_ids():
             to_number="7340400524",
             webhook_url="unused",
             workflow_run_id=123,
+        )
+
+
+@pytest.mark.asyncio
+async def test_initiate_call_rejects_stale_user_id_kwarg():
+    """A caller still passing the pre-org-scoping ``user_id`` kwarg (and not
+    ``organization_id``) must fail clearly, not silently build a wrong URL."""
+    provider = _provider()
+
+    with pytest.raises(ValueError, match="organization_id"):
+        await provider.initiate_call(
+            to_number="7340400524",
+            webhook_url="unused",
+            workflow_run_id=123,
+            workflow_id=7,
+            user_id=11,
         )
 
 
@@ -404,3 +420,62 @@ def test_validate_config_rejects_missing_did():
     """Outbound needs a DID (phone-number row or did_number) — add_lead enforces it."""
     provider = _provider(did_number=None, from_numbers=[])
     assert provider.validate_config() is False
+
+
+# ======== PHONE NUMBER OWNERSHIP ========
+
+
+@pytest.mark.asyncio
+async def test_validate_phone_number_accepts_any_did():
+    """No VoiceLink DID-inventory API exists — opt-out like the ARI provider."""
+    from api.services.telephony.base import ProviderSyncResult
+
+    result = await _provider().validate_phone_number("919484959244")
+    assert isinstance(result, ProviderSyncResult)
+    assert result.ok is True
+
+
+# ======== INBOUND/OUTBOUND MEDIA WEBSOCKET (org-scoped) ========
+
+
+class _FakeWebSocket:
+    """Minimal stand-in for fastapi.WebSocket's receive/close surface."""
+
+    def __init__(self, messages):
+        self._messages = list(messages)
+        self.closed_with = None
+
+    async def receive_text(self):
+        return json.dumps(self._messages.pop(0))
+
+    async def close(self, code=None, reason=None):
+        self.closed_with = (code, reason)
+
+
+@pytest.mark.asyncio
+async def test_handle_websocket_threads_organization_id_into_pipeline():
+    """handle_websocket's 3rd positional is organization_id (the shared
+    dispatcher's contract, not a user id) — must reach run_pipeline_telephony
+    as organization_id=, not user_id=."""
+    provider = _provider()
+    ws = _FakeWebSocket([
+        {"event": "connected"},
+        {"event": "start", "start": {"stream_sid": "MZ1", "call_sid": "CA1"}},
+    ])
+    captured = {}
+
+    async def fake_run_pipeline_telephony(websocket, **kwargs):
+        captured.update(kwargs)
+
+    with patch(
+        "api.services.pipecat.run_pipeline.run_pipeline_telephony",
+        new=fake_run_pipeline_telephony,
+    ):
+        await provider.handle_websocket(
+            ws, workflow_id=7, organization_id=42, workflow_run_id=123
+        )
+
+    assert captured.get("organization_id") == 42
+    assert "user_id" not in captured
+    assert captured.get("workflow_id") == 7
+    assert captured.get("workflow_run_id") == 123
