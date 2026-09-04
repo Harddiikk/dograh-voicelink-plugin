@@ -23,8 +23,8 @@ ARG DOGRAH_ROOT=""
 
 # Bring in the bundle (provider package + patches + overlay script), preserving
 # the layout apply_overlay.py expects (PLUGIN_ROOT = .../voicelink-overlay).
-COPY assets   /tmp/voicelink-overlay/assets
-COPY scripts  /tmp/voicelink-overlay/scripts
+COPY --chown=999:999 assets   /tmp/voicelink-overlay/assets
+COPY --chown=999:999 scripts  /tmp/voicelink-overlay/scripts
 
 # Apply the overlay in place against the image's code, then compile-check it so
 # the build fails loudly on any problem. Auto-detects the Dograh root unless
