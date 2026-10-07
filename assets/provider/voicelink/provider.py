@@ -18,7 +18,8 @@ up the optional HMAC capability token for free, backward-compatible when
 
 import json
 import re
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import aiohttp
 from fastapi import HTTPException, WebSocketDisconnect
@@ -74,6 +75,54 @@ _EVENT_STATUS = {
     "call.ended": "completed",
     "call.failed": "failed",
 }
+
+
+# Identity type stamped on a VoiceLink run's ``initial_context`` so the
+# transfer tool takes its "external PBX owns the customer leg" path: VoiceLink
+# moves the caller itself, and Dograh only has to hand off and drop its leg.
+TRANSFER_IDENTITY_TYPE = "voicelink"
+
+# Live media sockets, keyed by workflow run id. VoiceLink's transfer is an
+# in-band WebSocket event, but the transfer tool reaches the provider through a
+# fresh instance with no handle on the call. The pipeline runs inside the
+# WebSocket handler's own coroutine, so the socket and the tool call always
+# share a process.
+_ACTIVE_SOCKETS: Dict[int, "WebSocket"] = {}
+
+
+@asynccontextmanager
+async def transferable_call(
+    websocket: "WebSocket", workflow_run_id: int
+) -> AsyncIterator[None]:
+    """Make a live VoiceLink call transferable for the duration of the block.
+
+    Registers the media socket and stamps the run's transfer identity. If the
+    identity can't be stored the call still runs; the transfer tool then just
+    reports the transfer as unavailable.
+    """
+    from api.db import db_client
+
+    _ACTIVE_SOCKETS[workflow_run_id] = websocket
+    try:
+        await db_client.update_workflow_run(
+            run_id=workflow_run_id,
+            initial_context={
+                "external_pbx_call": {
+                    "type": TRANSFER_IDENTITY_TYPE,
+                    "workflow_run_id": workflow_run_id,
+                }
+            },
+        )
+    except Exception as e:
+        logger.warning(
+            f"[run {workflow_run_id}] Could not stamp VoiceLink transfer "
+            f"identity; transfers unavailable for this call: {e}"
+        )
+    try:
+        yield
+    finally:
+        if _ACTIVE_SOCKETS.get(workflow_run_id) is websocket:
+            del _ACTIVE_SOCKETS[workflow_run_id]
 
 
 class VoiceLinkProvider(TelephonyProvider):
@@ -482,15 +531,16 @@ class VoiceLinkProvider(TelephonyProvider):
                 f"stream_sid={stream_sid}, call_sid={call_sid}"
             )
 
-            await run_pipeline_telephony(
-                websocket,
-                provider_name=self.PROVIDER_NAME,
-                workflow_id=workflow_id,
-                workflow_run_id=workflow_run_id,
-                organization_id=organization_id,
-                call_id=call_sid or stream_sid,
-                transport_kwargs={"stream_id": stream_sid, "call_id": call_sid},
-            )
+            async with transferable_call(websocket, workflow_run_id):
+                await run_pipeline_telephony(
+                    websocket,
+                    provider_name=self.PROVIDER_NAME,
+                    workflow_id=workflow_id,
+                    workflow_run_id=workflow_run_id,
+                    organization_id=organization_id,
+                    call_id=call_sid or stream_sid,
+                    transport_kwargs={"stream_id": stream_sid, "call_id": call_sid},
+                )
 
             logger.info(f"[run {workflow_run_id}] VoiceLink pipeline completed")
 
@@ -648,6 +698,79 @@ class VoiceLinkProvider(TelephonyProvider):
 
     # ======== CALL TRANSFER METHODS ========
 
+    async def transfer_external_pbx_call(
+        self,
+        *,
+        identity: Dict[str, Any],
+        destination: str,
+        field_updates: Optional[Dict[str, str]] = None,
+        disposition: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Blind-transfer the caller with VoiceLink's native ``transfer`` event.
+
+        VoiceLink routes the live call to ``target`` itself, so a successful
+        send is the whole handoff: the transfer tool then marks the run
+        transferred and drops our media leg. ``field_updates`` and
+        ``disposition`` are PBX lead-record writes, which VoiceLink has no
+        equivalent of.
+        """
+        if not identity:
+            return None
+        identity_type = identity.get("type") or identity.get("provider")
+        if identity_type != TRANSFER_IDENTITY_TYPE:
+            return None
+
+        workflow_run_id = identity.get("workflow_run_id")
+        websocket = _ACTIVE_SOCKETS.get(workflow_run_id)
+        if websocket is None:
+            logger.error(
+                f"[run {workflow_run_id}] VoiceLink transfer: no live media "
+                f"socket for this run"
+            )
+            return {
+                "status": "failed",
+                "action": "external_pbx_transfer",
+                "message": "I'm sorry, I couldn't complete the transfer.",
+                "reason": "voicelink_call_not_active",
+            }
+
+        target = normalize_customer_number(destination)
+        if not target:
+            return {
+                "status": "failed",
+                "action": "external_pbx_transfer",
+                "message": "I'm sorry, I couldn't complete the transfer.",
+                "reason": "voicelink_invalid_target",
+            }
+        if len(target) != 10:
+            logger.warning(
+                f"[run {workflow_run_id}] VoiceLink transfer target normalized "
+                f"to {len(target)} digits (expected 10)"
+            )
+
+        try:
+            await websocket.send_text(
+                json.dumps({"event": "transfer", "target": target})
+            )
+        except Exception as e:
+            logger.error(f"[run {workflow_run_id}] VoiceLink transfer send failed: {e}")
+            return {
+                "status": "failed",
+                "action": "external_pbx_transfer",
+                "message": "I'm sorry, I couldn't complete the transfer.",
+                "reason": "voicelink_transfer_send_failed",
+            }
+
+        logger.info(
+            f"[run {workflow_run_id}] VoiceLink transfer sent to ***{target[-4:]}"
+        )
+        return {
+            "status": "success",
+            "action": "external_pbx_transfer",
+            "message": "Transferring your call now.",
+            "reason": None,
+        }
+
     async def transfer_call(
         self,
         destination: str,
@@ -657,24 +780,26 @@ class VoiceLinkProvider(TelephonyProvider):
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """
-        VoiceLink call transfers are not implemented yet.
+        Not used: VoiceLink transfers go through ``transfer_external_pbx_call``.
 
-        VoiceLink supports a native ``transfer`` WebSocket event
-        (``{"event": "transfer", "target": <number>}``) which can back a
-        future implementation.
+        Dograh's dial-and-conference transfer needs a provider that can place
+        a second leg and bridge it; VoiceLink instead re-routes the live call
+        itself on a ``transfer`` WebSocket event.
 
         Raises:
-            NotImplementedError: VoiceLink call transfers are yet to be
-                implemented.
+            NotImplementedError: always.
         """
-        raise NotImplementedError("VoiceLink provider does not support call transfers")
+        raise NotImplementedError(
+            "VoiceLink transfers use the native transfer event "
+            "(transfer_external_pbx_call)"
+        )
 
     def supports_transfers(self) -> bool:
         """
-        VoiceLink does not support call transfers yet.
+        No dial-and-conference transfers; see ``transfer_external_pbx_call``.
 
         Returns:
-            False - VoiceLink provider does not support call transfers
+            False - the conference transfer path is not supported
         """
         return False
 

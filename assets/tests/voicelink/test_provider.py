@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
+from api.services.telephony.providers.voicelink import provider as provider_module
 from api.services.telephony.providers.voicelink.provider import (
     VoiceLinkProvider,
     normalize_customer_number,
@@ -470,7 +471,7 @@ async def test_handle_websocket_threads_organization_id_into_pipeline():
     with patch(
         "api.services.pipecat.run_pipeline.run_pipeline_telephony",
         new=fake_run_pipeline_telephony,
-    ):
+    ), patch("api.db:db_client.update_workflow_run", new=AsyncMock()):
         await provider.handle_websocket(
             ws, workflow_id=7, organization_id=42, workflow_run_id=123
         )
@@ -479,3 +480,119 @@ async def test_handle_websocket_threads_organization_id_into_pipeline():
     assert "user_id" not in captured
     assert captured.get("workflow_id") == 7
     assert captured.get("workflow_run_id") == 123
+
+
+# ======== CALL TRANSFER (native VoiceLink transfer event) ========
+
+
+class _SendingWebSocket:
+    def __init__(self, fail=False):
+        self.sent = []
+        self._fail = fail
+
+    async def send_text(self, text):
+        if self._fail:
+            raise RuntimeError("socket closed")
+        self.sent.append(json.loads(text))
+
+
+_IDENTITY = {"type": "voicelink", "workflow_run_id": 123}
+
+
+@pytest.mark.asyncio
+async def test_transferable_call_registers_socket_and_stamps_identity():
+    """A live call is transferable only inside the block: the socket is
+    registered for the run and the run carries the transfer identity that
+    routes the transfer tool to VoiceLink."""
+    ws = _SendingWebSocket()
+    update = AsyncMock()
+
+    with patch("api.db:db_client.update_workflow_run", new=update):
+        async with provider_module.transferable_call(ws, 123):
+            assert provider_module._ACTIVE_SOCKETS[123] is ws
+
+    update.assert_awaited_once_with(
+        run_id=123, initial_context={"external_pbx_call": _IDENTITY}
+    )
+    assert 123 not in provider_module._ACTIVE_SOCKETS
+
+
+@pytest.mark.asyncio
+async def test_transferable_call_still_runs_when_identity_write_fails():
+    ws = _SendingWebSocket()
+    ran = False
+
+    with patch(
+        "api.db:db_client.update_workflow_run",
+        new=AsyncMock(side_effect=RuntimeError("db down")),
+    ):
+        async with provider_module.transferable_call(ws, 123):
+            ran = True
+
+    assert ran
+    assert 123 not in provider_module._ACTIVE_SOCKETS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "destination", ["+91 98290 12345", "919829012345", "09829012345", "9829012345"]
+)
+async def test_transfer_sends_native_event_with_bare_local_target(destination):
+    ws = _SendingWebSocket()
+    with patch.dict(provider_module._ACTIVE_SOCKETS, {123: ws}):
+        result = await _provider().transfer_external_pbx_call(
+            identity=_IDENTITY, destination=destination
+        )
+
+    assert ws.sent == [{"event": "transfer", "target": "9829012345"}]
+    assert result["status"] == "success"
+    assert result["action"] == "external_pbx_transfer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", [None, {}, {"type": "vicidial"}])
+async def test_transfer_ignores_runs_without_voicelink_identity(identity):
+    ws = _SendingWebSocket()
+    with patch.dict(provider_module._ACTIVE_SOCKETS, {123: ws}):
+        result = await _provider().transfer_external_pbx_call(
+            identity=identity, destination="9829012345"
+        )
+
+    assert result is None
+    assert ws.sent == []
+
+
+@pytest.mark.asyncio
+async def test_transfer_fails_when_call_is_no_longer_live():
+    with patch.dict(provider_module._ACTIVE_SOCKETS, {}, clear=True):
+        result = await _provider().transfer_external_pbx_call(
+            identity=_IDENTITY, destination="9829012345"
+        )
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "voicelink_call_not_active"
+
+
+@pytest.mark.asyncio
+async def test_transfer_fails_on_empty_target():
+    ws = _SendingWebSocket()
+    with patch.dict(provider_module._ACTIVE_SOCKETS, {123: ws}):
+        result = await _provider().transfer_external_pbx_call(
+            identity=_IDENTITY, destination=" "
+        )
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "voicelink_invalid_target"
+    assert ws.sent == []
+
+
+@pytest.mark.asyncio
+async def test_transfer_fails_when_send_raises():
+    ws = _SendingWebSocket(fail=True)
+    with patch.dict(provider_module._ACTIVE_SOCKETS, {123: ws}):
+        result = await _provider().transfer_external_pbx_call(
+            identity=_IDENTITY, destination="9829012345"
+        )
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "voicelink_transfer_send_failed"

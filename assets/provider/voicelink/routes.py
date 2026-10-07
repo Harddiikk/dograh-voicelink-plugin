@@ -12,6 +12,7 @@ from pipecat.utils.run_context import set_current_run_id
 
 from api.db import db_client
 from api.services.telephony.factory import get_telephony_provider_for_run
+from api.services.telephony.providers.voicelink.provider import transferable_call
 from api.services.telephony.status_processor import (
     StatusCallbackRequest,
     _process_status_update,
@@ -261,15 +262,16 @@ async def voicelink_inbound_ws(websocket: WebSocket) -> None:
             f"[run {run_id}] VoiceLink INBOUND routed DID {to_norm} -> workflow "
             f"{workflow_id}; starting pipeline"
         )
-        await run_pipeline_telephony(
-            websocket,
-            provider_name="voicelink",
-            workflow_id=workflow_id,
-            workflow_run_id=run_id,
-            organization_id=config.organization_id,
-            call_id=call_sid or stream_sid or "",
-            transport_kwargs={"stream_id": stream_sid, "call_id": call_sid},
-        )
+        async with transferable_call(websocket, run_id):
+            await run_pipeline_telephony(
+                websocket,
+                provider_name="voicelink",
+                workflow_id=workflow_id,
+                workflow_run_id=run_id,
+                organization_id=config.organization_id,
+                call_id=call_sid or stream_sid or "",
+                transport_kwargs={"stream_id": stream_sid, "call_id": call_sid},
+            )
         logger.info(f"[run {run_id}] VoiceLink INBOUND pipeline completed")
 
     except WebSocketDisconnect as e:
