@@ -75,9 +75,7 @@ async def test_initiate_call_sends_bare_local_number_and_registered_did():
     provider = _provider()
 
     with (
-        patch.object(
-            provider, "_api_request", new_callable=AsyncMock
-        ) as api_request,
+        patch.object(provider, "_api_request", new_callable=AsyncMock) as api_request,
         patch(
             "api.services.telephony.providers.voicelink.provider.get_backend_endpoints",
             new_callable=AsyncMock,
@@ -126,9 +124,7 @@ async def test_initiate_call_uses_explicit_from_number_as_did():
     provider = _provider()
 
     with (
-        patch.object(
-            provider, "_api_request", new_callable=AsyncMock
-        ) as api_request,
+        patch.object(provider, "_api_request", new_callable=AsyncMock) as api_request,
         patch(
             "api.services.telephony.providers.voicelink.provider.get_backend_endpoints",
             new_callable=AsyncMock,
@@ -179,9 +175,7 @@ async def test_initiate_call_falls_back_to_configured_did():
     provider = _provider(did_number=None, from_numbers=["919484959244"])
 
     with (
-        patch.object(
-            provider, "_api_request", new_callable=AsyncMock
-        ) as api_request,
+        patch.object(provider, "_api_request", new_callable=AsyncMock) as api_request,
         patch(
             "api.services.telephony.providers.voicelink.provider.get_backend_endpoints",
             new_callable=AsyncMock,
@@ -206,9 +200,7 @@ async def test_initiate_call_raises_on_provider_error():
     provider = _provider()
 
     with (
-        patch.object(
-            provider, "_api_request", new_callable=AsyncMock
-        ) as api_request,
+        patch.object(provider, "_api_request", new_callable=AsyncMock) as api_request,
         patch(
             "api.services.telephony.providers.voicelink.provider.get_backend_endpoints",
             new_callable=AsyncMock,
@@ -459,19 +451,24 @@ async def test_handle_websocket_threads_organization_id_into_pipeline():
     dispatcher's contract, not a user id) — must reach run_pipeline_telephony
     as organization_id=, not user_id=."""
     provider = _provider()
-    ws = _FakeWebSocket([
-        {"event": "connected"},
-        {"event": "start", "start": {"stream_sid": "MZ1", "call_sid": "CA1"}},
-    ])
+    ws = _FakeWebSocket(
+        [
+            {"event": "connected"},
+            {"event": "start", "start": {"stream_sid": "MZ1", "call_sid": "CA1"}},
+        ]
+    )
     captured = {}
 
     async def fake_run_pipeline_telephony(websocket, **kwargs):
         captured.update(kwargs)
 
-    with patch(
-        "api.services.pipecat.run_pipeline.run_pipeline_telephony",
-        new=fake_run_pipeline_telephony,
-    ), patch("api.db:db_client.update_workflow_run", new=AsyncMock()):
+    with (
+        patch(
+            "api.services.pipecat.run_pipeline.run_pipeline_telephony",
+            new=fake_run_pipeline_telephony,
+        ),
+        patch("api.db:db_client.update_workflow_run", new=AsyncMock()),
+    ):
         await provider.handle_websocket(
             ws, workflow_id=7, organization_id=42, workflow_run_id=123
         )
@@ -596,3 +593,52 @@ async def test_transfer_fails_when_send_raises():
 
     assert result["status"] == "failed"
     assert result["reason"] == "voicelink_transfer_send_failed"
+
+
+@pytest.mark.parametrize(
+    "event,hangup_cause,call_status,expected_status",
+    [
+        # Shapes seen on real VoiceLink campaign calls (answeredAt is null).
+        ("call.failed", "19 - User alerting, no answer", "NO ANSWER", "no-answer"),
+        ("call.completed", "16 - Normal Clearing", "NO ANSWER", "no-answer"),
+        ("call.ended", "16", None, "no-answer"),
+        ("call.failed", "17 - User busy", "BUSY", "busy"),
+        ("call.failed", "21 - Call Rejected", None, "busy"),
+        # VoiceLink labels every unanswered call "NO ANSWER"; the cause wins.
+        ("call.failed", "1 - Unallocated (unassigned) number", "NO ANSWER", "failed"),
+        ("call.failed", "38 - Network out of order", "NO ANSWER", "failed"),
+        ("call.completed", "34 - Circuit/channel congestion", "NO ANSWER", "failed"),
+        ("call.failed", "21 - Call Rejected", "NO ANSWER", "busy"),
+        # No cause: fall back to callStatus.
+        ("call.failed", None, "NO ANSWER", "no-answer"),
+        ("call.failed", None, "BUSY", "busy"),
+        ("call.failed", None, None, "failed"),
+    ],
+)
+def test_parse_status_callback_classifies_unanswered_calls(
+    event, hangup_cause, call_status, expected_status
+):
+    provider = _provider()
+
+    parsed = provider.parse_status_callback(
+        _event(
+            event,
+            answeredAt=None,
+            hangupCause=hangup_cause,
+            callStatus=call_status,
+            durationSec=None,
+        )
+    )
+
+    assert parsed["status"] == expected_status
+
+
+@pytest.mark.parametrize("event", ["call.completed", "call.ended"])
+def test_parse_status_callback_answered_call_stays_completed(event):
+    provider = _provider()
+
+    parsed = provider.parse_status_callback(
+        _event(event, hangupCause="16 - Normal Clearing")
+    )
+
+    assert parsed["status"] == "completed"

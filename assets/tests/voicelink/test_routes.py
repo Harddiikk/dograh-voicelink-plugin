@@ -170,3 +170,134 @@ async def test_voicelink_events_route_rejects_invalid_json_without_raising():
 
     assert result == {"status": "error", "reason": "invalid_json"}
     process_status.assert_not_awaited()
+
+
+def _unanswered_body(event: str) -> str:
+    body = json.loads(_body(event))
+    body["call"].update(
+        answeredAt=None,
+        hangupCause="19 - User alerting, no answer",
+        callStatus="NO ANSWER",
+        durationSec=None,
+    )
+    return json.dumps(body)
+
+
+async def _post(body: str, workflow_run, claimed: bool):
+    with (
+        patch(
+            "api.services.telephony.providers.voicelink.routes.db_client"
+        ) as db_client,
+        patch(
+            "api.services.telephony.providers.voicelink.routes.get_telephony_provider_for_run",
+            new_callable=AsyncMock,
+            return_value=_provider(),
+        ),
+        patch(
+            "api.services.telephony.providers.voicelink.routes._process_status_update",
+            new_callable=AsyncMock,
+        ) as process_status,
+        patch(
+            "api.services.telephony.providers.voicelink.routes._claim_terminal_event",
+            new_callable=AsyncMock,
+            return_value=claimed,
+        ),
+    ):
+        db_client.get_workflow_run_by_id = AsyncMock(return_value=workflow_run)
+        db_client.get_workflow_by_id = AsyncMock(
+            return_value=SimpleNamespace(organization_id=11)
+        )
+        db_client.update_workflow_run = AsyncMock()
+
+        result = await handle_voicelink_events(_request(body), workflow_run_id=123)
+
+    return result, process_status, db_client.update_workflow_run
+
+
+@pytest.mark.asyncio
+async def test_unanswered_call_is_processed_as_no_answer():
+    run = SimpleNamespace(workflow_id=7, state="initialized", logs={})
+
+    result, process_status, _ = await _post(
+        _unanswered_body("call.failed"), run, claimed=True
+    )
+
+    assert result == {"status": "success"}
+    _, status_update = process_status.await_args.args
+    assert status_update.status == "no-answer"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_terminal_event_is_logged_but_not_processed():
+    run = SimpleNamespace(
+        workflow_id=7,
+        state="completed",
+        logs={"telephony_status_callbacks": [{"status": "no-answer"}]},
+    )
+
+    result, process_status, update_run = await _post(
+        _unanswered_body("call.completed"), run, claimed=False
+    )
+
+    assert result == {"status": "success"}
+    process_status.assert_not_awaited()
+    callbacks = update_run.await_args.kwargs["logs"]["telephony_status_callbacks"]
+    assert len(callbacks) == 2
+    assert callbacks[-1]["duplicate"] is True
+    assert callbacks[-1]["status"] == "no-answer"
+
+
+@pytest.mark.asyncio
+async def test_answered_call_without_media_stream_is_recorded_as_failed():
+    """The run never left INITIALIZED, so no agent ever spoke on the call."""
+    run = SimpleNamespace(workflow_id=7, state="initialized", logs={})
+    body = json.loads(_body("call.completed"))
+    body["call"]["answeredAt"] = "2026-06-11T10:00:08Z"
+
+    _, process_status, _ = await _post(json.dumps(body), run, claimed=True)
+
+    _, status_update = process_status.await_args.args
+    assert status_update.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_answered_call_with_running_pipeline_stays_completed():
+    run = SimpleNamespace(workflow_id=7, state="running", logs={})
+    body = json.loads(_body("call.completed"))
+    body["call"]["answeredAt"] = "2026-06-11T10:00:08Z"
+
+    _, process_status, _ = await _post(json.dumps(body), run, claimed=True)
+
+    _, status_update = process_status.await_args.args
+    assert status_update.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_in_flight_events_do_not_claim_the_terminal_slot():
+    run = SimpleNamespace(workflow_id=7, state="initialized", logs={})
+
+    with patch(
+        "api.services.telephony.providers.voicelink.routes._claim_terminal_event",
+        new_callable=AsyncMock,
+    ) as claim:
+        with (
+            patch("api.services.telephony.providers.voicelink.routes.db_client") as db,
+            patch(
+                "api.services.telephony.providers.voicelink.routes.get_telephony_provider_for_run",
+                new_callable=AsyncMock,
+                return_value=_provider(),
+            ),
+            patch(
+                "api.services.telephony.providers.voicelink.routes._process_status_update",
+                new_callable=AsyncMock,
+            ),
+        ):
+            db.get_workflow_run_by_id = AsyncMock(return_value=run)
+            db.get_workflow_by_id = AsyncMock(
+                return_value=SimpleNamespace(organization_id=11)
+            )
+            await handle_voicelink_events(
+                _request(_body("call.ringing")), workflow_run_id=123
+            )
+
+    claim.assert_not_awaited()

@@ -5,12 +5,16 @@ provider registry — see ProviderSpec.router.
 """
 
 import json
+from datetime import UTC, datetime
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pipecat.utils.run_context import set_current_run_id
 
+from api.constants import REDIS_URL
 from api.db import db_client
+from api.enums import TelephonyCallStatus, WorkflowRunState
 from api.services.telephony.factory import get_telephony_provider_for_run
 from api.services.telephony.providers.voicelink.provider import transferable_call
 from api.services.telephony.status_processor import (
@@ -19,6 +23,68 @@ from api.services.telephony.status_processor import (
 )
 
 router = APIRouter()
+
+_TERMINAL_STATUSES = frozenset(
+    {
+        TelephonyCallStatus.COMPLETED,
+        TelephonyCallStatus.FAILED,
+        TelephonyCallStatus.BUSY,
+        TelephonyCallStatus.NO_ANSWER,
+        TelephonyCallStatus.CANCELED,
+        TelephonyCallStatus.ERROR,
+    }
+)
+_TERMINAL_CLAIM_TTL_SECS = 24 * 60 * 60
+
+_redis: aioredis.Redis | None = None
+
+
+async def _claim_terminal_event(workflow_run_id: int) -> bool:
+    """True for the first terminal event of a run, False for later ones.
+
+    VoiceLink sends two or three terminal events per call (``call.failed``,
+    ``call.ended``, ``call.completed``), often concurrently. Processing each one
+    would publish duplicate campaign retries and double-count the call in the
+    circuit breaker. Fails open: if Redis is down every event is processed, as
+    before.
+    """
+    global _redis
+    try:
+        if _redis is None:
+            _redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+        return bool(
+            await _redis.set(
+                f"voicelink:terminal:{workflow_run_id}",
+                "1",
+                ex=_TERMINAL_CLAIM_TTL_SECS,
+                nx=True,
+            )
+        )
+    except Exception as e:
+        logger.warning(
+            f"[run {workflow_run_id}] Could not claim VoiceLink terminal event: {e}"
+        )
+        return True
+
+
+async def _log_duplicate_terminal_event(
+    workflow_run, workflow_run_id: int, parsed_data: dict
+) -> None:
+    """Keep the raw callback in the run's logs without acting on it again."""
+    callbacks = (workflow_run.logs or {}).get("telephony_status_callbacks", [])
+    callbacks.append(
+        {
+            "status": parsed_data["status"],
+            "timestamp": datetime.now(UTC).isoformat(),
+            "call_id": parsed_data["call_id"],
+            "duration": parsed_data.get("duration"),
+            "duplicate": True,
+            **parsed_data.get("extra", {}),
+        }
+    )
+    await db_client.update_workflow_run(
+        run_id=workflow_run_id, logs={"telephony_status_callbacks": callbacks}
+    )
 
 
 @router.post("/voicelink/events/{workflow_run_id}")
@@ -45,9 +111,7 @@ async def handle_voicelink_events(
         return {"status": "error", "reason": "invalid_json"}
 
     event_type = event_data.get("event", "")
-    logger.info(
-        f"[run {workflow_run_id}] Received VoiceLink event: event={event_type}"
-    )
+    logger.info(f"[run {workflow_run_id}] Received VoiceLink event: event={event_type}")
     logger.debug(
         f"[run {workflow_run_id}] VoiceLink event body: {json.dumps(event_data)}"
     )
@@ -75,6 +139,33 @@ async def handle_voicelink_events(
         f"[run {workflow_run_id}] Parsed VoiceLink event: "
         f"call_id={parsed_data['call_id']}, status={parsed_data['status']}"
     )
+
+    status = TelephonyCallStatus.from_raw(parsed_data["status"])
+    if status in _TERMINAL_STATUSES:
+        if not await _claim_terminal_event(workflow_run_id):
+            logger.info(
+                f"[run {workflow_run_id}] Duplicate VoiceLink terminal event "
+                f"{event_type}; logged only"
+            )
+            await _log_duplicate_terminal_event(
+                workflow_run, workflow_run_id, parsed_data
+            )
+            return {"status": "success"}
+
+        # An answered call whose run never left INITIALIZED had no media
+        # stream: the caller heard silence and no agent ran. Recording it as
+        # "completed" leaves it with no disposition and skips the post-call
+        # webhook, so record it as a failed call instead.
+        if (
+            status == TelephonyCallStatus.COMPLETED
+            and getattr(workflow_run, "state", None)
+            == WorkflowRunState.INITIALIZED.value
+        ):
+            logger.warning(
+                f"[run {workflow_run_id}] VoiceLink call was answered but the "
+                "media stream never connected; recording it as failed"
+            )
+            parsed_data["status"] = TelephonyCallStatus.FAILED.value
 
     status_update = StatusCallbackRequest(
         call_id=parsed_data["call_id"],
@@ -216,9 +307,7 @@ async def voicelink_inbound_ws(websocket: WebSocket) -> None:
 
         config, phone_row = match
         if not phone_row.inbound_workflow_id:
-            logger.error(
-                f"VoiceLink INBOUND: DID {to_norm} has no inbound_workflow_id"
-            )
+            logger.error(f"VoiceLink INBOUND: DID {to_norm} has no inbound_workflow_id")
             await websocket.close(code=4404, reason="No workflow for DID")
             return
 
@@ -275,9 +364,7 @@ async def voicelink_inbound_ws(websocket: WebSocket) -> None:
         logger.info(f"[run {run_id}] VoiceLink INBOUND pipeline completed")
 
     except WebSocketDisconnect as e:
-        logger.info(
-            f"VoiceLink INBOUND ws closed: code={e.code} reason={e.reason!r}"
-        )
+        logger.info(f"VoiceLink INBOUND ws closed: code={e.code} reason={e.reason!r}")
     except Exception as e:
         logger.error(f"VoiceLink INBOUND ws error: {e}")
         try:

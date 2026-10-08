@@ -76,6 +76,44 @@ _EVENT_STATUS = {
     "call.failed": "failed",
 }
 
+# Q.850 causes VoiceLink reports on calls that never connected. It sends a
+# no-answer as ``call.failed`` (cause 19) or as a plain ``call.ended`` /
+# ``call.completed`` (cause 16 with no ``answeredAt``), so the event name alone
+# can't tell a no-answer from a real failure, and only busy / no-answer are
+# retried by campaigns.
+_TERMINAL_EVENTS = frozenset({"call.completed", "call.ended", "call.failed"})
+_BUSY_CAUSES = frozenset({17, 21})  # user busy, call rejected
+_NO_ANSWER_CAUSES = frozenset({16, 18, 19})  # cleared while ringing, no answer
+
+
+def _hangup_cause_code(call: Dict[str, Any]) -> Optional[int]:
+    """Leading Q.850 code of ``hangupCause`` ("19 - User alerting..." -> 19)."""
+    cause = str(call.get("hangupCause") or "").strip()
+    code = cause.split(" ", 1)[0].split("-", 1)[0].strip()
+    return int(code) if code.isdigit() else None
+
+
+def _unanswered_status(call: Dict[str, Any]) -> str:
+    """Status for a call that ended without ever being answered.
+
+    The Q.850 cause decides when present: VoiceLink sets ``callStatus`` to
+    "NO ANSWER" on every unanswered call, including unallocated numbers and
+    network failures, so it is only a fallback.
+    """
+    code = _hangup_cause_code(call)
+    if code is not None:
+        if code in _BUSY_CAUSES:
+            return "busy"
+        if code in _NO_ANSWER_CAUSES:
+            return "no-answer"
+        return "failed"
+    call_status = str(call.get("callStatus") or "").upper()
+    if "BUSY" in call_status:
+        return "busy"
+    if "NO ANSWER" in call_status:
+        return "no-answer"
+    return "failed"
+
 
 # Identity type stamped on a VoiceLink run's ``initial_context`` so the
 # transfer tool takes its "external PBX owns the customer leg" path: VoiceLink
@@ -308,8 +346,10 @@ class VoiceLinkProvider(TelephonyProvider):
         # DID keeps its registered (91-prefixed) form; only strip formatting.
         # Source order: the per-call from_number (campaign dispatcher pool),
         # then the stored did_number, then the first configured from_number.
-        did_source = from_number or self.did_number or (
-            self.from_numbers[0] if self.from_numbers else ""
+        did_source = (
+            from_number
+            or self.did_number
+            or (self.from_numbers[0] if self.from_numbers else "")
         )
         did_number = re.sub(r"\D", "", did_source)
         if not did_number:
@@ -355,8 +395,10 @@ class VoiceLinkProvider(TelephonyProvider):
 
         status, data = await self._api_request("POST", "/v1/add_lead", payload)
 
-        if status not in (200, 201) or not isinstance(data, dict) or not data.get(
-            "status"
+        if (
+            status not in (200, 201)
+            or not isinstance(data, dict)
+            or not data.get("status")
         ):
             logger.error(f"VoiceLink add_lead failed: HTTP {status} body={data}")
             raise HTTPException(
@@ -450,6 +492,14 @@ class VoiceLinkProvider(TelephonyProvider):
         call = data.get("call") or {}
         event = (data.get("event") or "").lower()
         status = _EVENT_STATUS.get(event, event)
+        # ``answeredAt`` is present-but-null on every unanswered call; an
+        # absent key means an older payload, so keep the plain event mapping.
+        if (
+            event in _TERMINAL_EVENTS
+            and "answeredAt" in call
+            and not call["answeredAt"]
+        ):
+            status = _unanswered_status(call)
 
         duration = call.get("durationSec")
         # Field name unconfirmed upstream — check both spellings defensively.
@@ -504,9 +554,7 @@ class VoiceLinkProvider(TelephonyProvider):
                 start_msg = first_msg
 
             if start_msg.get("event") != "start":
-                logger.error(
-                    f"Expected 'start' event, got: {start_msg.get('event')}"
-                )
+                logger.error(f"Expected 'start' event, got: {start_msg.get('event')}")
                 await websocket.close(code=4400, reason="Expected start event")
                 return
 
@@ -517,9 +565,7 @@ class VoiceLinkProvider(TelephonyProvider):
                 or start_msg.get("stream_sid")
                 or ""
             )
-            call_sid = (
-                start_data.get("call_sid") or start_data.get("callSid") or ""
-            )
+            call_sid = start_data.get("call_sid") or start_data.get("callSid") or ""
 
             if not stream_sid:
                 logger.error(f"Missing stream_sid in start event: {start_data}")
